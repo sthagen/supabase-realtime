@@ -91,7 +91,7 @@ defmodule Realtime.DecoderTest do
                    type: "numeric",
                    type_modifier: 4_294_967_295
                  }
-               ],
+               ]
              }
   end
 
@@ -220,6 +220,24 @@ defmodule Realtime.DecoderTest do
                relation_id: 24576,
                old_tuple_data: {"baz", "560"}
              }
+    end
+
+    test "https://github.com/supabase/realtime/issues/21 - 1" do
+      {:ok, expected_dt_no_microseconds, 0} = DateTime.from_iso8601("2020-02-25 17:26:18Z")
+      expected_dt = DateTime.add(expected_dt_no_microseconds, 74_222, :microsecond)
+      assert Realtime.Decoder.decode_message(
+               <<67, 0, 0, 0, 0, 0, 1, 104, 91, 104, 0, 0, 0, 0, 1, 104, 91, 152, 0, 2, 66, 104,
+                 141, 229, 100, 110>>
+             ) == %Commit{commit_timestamp: expected_dt, end_lsn: {0, 23616408}, flags: [], lsn: {0, 23616360}}
+    end
+    
+    test "https://github.com/supabase/realtime/issues/21 - 2" do
+      {:ok, expected_dt_no_microseconds, 0} = DateTime.from_iso8601("2020-02-25 17:26:18Z")
+      expected_dt = DateTime.add(expected_dt_no_microseconds, 110_843, :microsecond)
+      assert Realtime.Decoder.decode_message(
+               <<67, 0, 0, 0, 0, 0, 1, 104, 92, 72, 0, 0, 0, 0, 1, 104, 92, 120, 0, 2, 66, 104,
+                 141, 229, 243, 123>>
+             ) == %Commit{commit_timestamp: expected_dt, end_lsn: {0, 23616632}, flags: [], lsn: {0, 23616584}}
     end
   end
 end
