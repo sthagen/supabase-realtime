@@ -4,35 +4,40 @@ Listens to changes in a PostgreSQL Database and broadcasts them over websockets.
 
 <p align="center"><kbd><img src="./examples/next-js/demo.gif" alt="Demo"/></kbd></p>
 
-
 **Contents**
+
+- [Hiring](#hiring)
 - [Status](#status)
 - [Example](#example)
 - [Introduction](#introduction)
     - [What is this?](#what-is-this)
     - [Cool, but why not just use Postgres' `NOTIFY`?](#cool-but-why-not-just-use-postgres-notify)
     - [What are the benefits?](#what-are-the-benefits)
-    - [What can I build with this?](#what-can-i-build-with-this)
 - [Quick start](#quick-start)
-- [Getting Started](#getting-started)
-  - [Client](#client)
-  - [Server](#server)
+- [Client libraries](#client-libraries)
+- [Server](#server)
   - [Database set up](#database-set-up)
   - [Server set up](#server-set-up)
 - [Contributing](#contributing)
+- [Releasing](#releasing)
 - [License](#license)
 - [Credits](#credits)
+- [Sponsors](#sponsors)
+
+## Hiring
+
+Supabase is hiring an Elixir expert to work full-time on this repo. If you have the experience, get in touch.
 
 ## Status
 
 - [x] Alpha: Under heavy development
-- [x] Beta: Ready for use. But go easy on us, there may be a few kinks.
-- [ ] 1.0: Use in production!
+- [x] Public Alpha: Ready for use. But go easy on us, there may be a few kinks.
+- [x] Public Beta: Stable enough for most non-enterprise use-cases
+- [ ] Public: Production-ready
 
-This repo is still under heavy development and the documentation is evolving. You're welcome to try it, but expect some breaking changes. Watch "releases" of this repo to receive a notifification when we are ready for Beta. And give us a star if you like it!
+This repo is still under heavy development and the documentation is evolving. You're welcome to try it, but expect some breaking changes. Watch "releases" of this repo to get notified of major updates. And give us a star if you like it!
 
 ![Watch this repo](https://gitcdn.xyz/repo/supabase/monorepo/master/web/static/watch-repo.gif "Watch this repo")
-
 
 ## Example
 
@@ -42,15 +47,20 @@ import { Socket } = '@supabase/realtime-js'
 var socket = new Socket(process.env.REALTIME_URL)
 socket.connect()
 
+// Listen to all changes to user ID 99
+var allChanges = this.socket.channel('realtime:public:users:id.eq.99')
+  .join()
+  .on('*', payload => { console.log('Update received!', payload) })
+
 // Listen to only INSERTS on the 'users' table in the 'public' schema
 var allChanges = this.socket.channel('realtime:public:users')
   .join()
   .on('INSERT', payload => { console.log('Update received!', payload) })
 
-// Listen to all changes from the 'public' schema
+// Listen to all updates from the 'public' schema
 var allChanges = this.socket.channel('realtime:public')
   .join()
-  .on('*', payload => { console.log('Update received!', payload) })
+  .on('UPDATE', payload => { console.log('Update received!', payload) })
 
 // Listen to all changes in the database
 let allChanges = this.socket.channel('realtime:*')
@@ -69,94 +79,37 @@ It works like this:
 
 1. the Phoenix server listens to PostgreSQL's replication functionality (using Postgres' logical decoding)
 2. it converts the byte stream into JSON
-3. it then broadcasts over websockets. 
-  
+3. it then broadcasts over websockets.
+
 #### Cool, but why not just use Postgres' `NOTIFY`?
 
 A few reasons:
 
 1. You don't have to set up triggers on every table
-2. NOTIFY has a payload limit of 8000 bytes and will fail for anything larger. The usual solution is to send and ID then fetch the record, but that's heavy on the database
+2. NOTIFY has a payload limit of 8000 bytes and will fail for anything larger. The usual solution is to send an ID then fetch the record, but that's heavy on the database
 3. This server consumes one connection to the database, then you can connect many clients to this server. Easier on your database, and to scale up you just add realtime servers
 
 #### What are the benefits?
 
-1. The beauty of listening to the replication functionality is that you can make changes to your database from anywhere - your API, directly in the DB, via a console etc - and you will still receive the changes via websockets. 
-2. Decoupling. For example, if you want to send a new slack message every time someone makes a new purchase you might build that funcitonality directly into your API. This allows you to decouple your async functionality from your API.
+1. The beauty of listening to the replication functionality is that you can make changes to your database from anywhere - your API, directly in the DB, via a console etc - and you will still receive the changes via websockets.
+2. Decoupling. For example, if you want to send a new slack message every time someone makes a new purchase you might build that functionality directly into your API. This allows you to decouple your async functionality from your API.
 3. This is built with Phoenix, an [extremely scalable Elixir framework](https://www.phoenixframework.org/blog/the-road-to-2-million-websocket-connections)
 
-#### What can I build with this?
-
-1. Chat applications
-2. Games
-3. Live dashboards
-4. Connectors - sending events to queues etc
-5. Streaming analytics
 
 ## Quick start
 
-If you just want to start it up and see it in action: 
+We have set up some simple examples that show how to use this server:
 
-1. Run `docker-compose up`
-2. Visit `http://localhost:3000` (be patient, node_modules will need to install)
+- [Next.js example](https://github.com/supabase/realtime/tree/master/examples/next-js)
+- [NodeJS example](https://github.com/supabase/realtime/tree/master/examples/node-js)
 
-## Getting Started
 
-### Client
+## Client libraries
 
-Install the client library
+- Javascript: [@supabase/realtime-js](https://github.com/supabase/realtime-js)
 
-```sh
-npm install --save @supabase/realtime-js
-```
 
-Set up the socket
-
-```js
-import { Socket } = '@supabase/realtime-js'
-
-const REALTIME_URL = process.env.REALTIME_URL || 'http://localhost:4000'
-var socket = new Socket(REALTIME_URL) 
-socket.connect()
-```
-
-You can listen to these events on each table:
-
-```js
-const EVENTS = {
-  EVERYTHING: '*',
-  INSERT: 'INSERT',
-  UPDATE: 'UPDATE',
-  DELETE: 'DELETE'
-}
-```
-
-Example 1: Listen to all INSERTS, on your `users` table
-
-```js
-var allChanges = this.socket.channel('realtime:public:users')
-  .join()
-  .on(EVENTS.INSERT, payload => { console.log('Record inserted!', payload) })
-```
-
-Example 2: Listen to all UPDATES in the `public` schema
-
-```js
-var allChanges = this.socket.channel('realtime:public')
-  .join()
-  .on(EVENTS.UPDATE, payload => { console.log('Update received!', payload) })
-
-```
-
-Example 3: Listen to all INSERTS, UPDATES, and DELETES, in all schemas
-
-```js
-let allChanges = this.socket.channel('realtime:*')
-  .join()
-  .on(EVENTS.EVERYTHING, payload => { console.log('Update received!', payload) })
-```
-
-### Server
+## Server
 
 ### Database set up
 
@@ -167,8 +120,7 @@ There are a some requirements for your database
    1. it must have the `wal_level` set to logical. You can check this by running `SHOW wal_level;`. To set the `wal_level`, you can call `ALTER SYSTEM SET wal_level = logical;`
    2. You must set `max_replication_slots` to at least 1: `ALTER SYSTEM SET max_replication_slots = 5;`
 3. Create a `PUBLICATION` for this server to listen to: `CREATE PUBLICATION supabase_realtime FOR ALL TABLES;`
-4. [OPTIONAL] If you want to recieve the old record (previous values) on UDPATE and DELETE, you can set the `REPLICA IDENTITY` to `FULL` like this: `ALTER TABLE your_table REPLICA IDENTITY FULL;`. This has to be set for each table unfortunately.
-
+4. [OPTIONAL] If you want to receive the old record (previous values) on UPDATE and DELETE, you can set the `REPLICA IDENTITY` to `FULL` like this: `ALTER TABLE your_table REPLICA IDENTITY FULL;`. This has to be set for each table unfortunately.
 
 ### Server set up
 
@@ -189,6 +141,18 @@ docker run \
   supabase/realtime
 ```
 
+**OPTIONS**
+
+```sh
+DB_HOST       # {string} Database host URL
+DB_NAME       # {string} Postgres database name
+DB_USER       # {string} Database user
+DB_PASSWORD   # {string} Database password
+DB_PORT       # {number} Database port
+SLOT_NAME     # {string} A unique name for Postgres to track where this server has "listened until". If the server dies, it can pick up from the last position. This should be lowercase.
+PORT          # {number} Port which you can connect your client/listeners
+```
+
 ## Contributing
 
 - Fork the repo on GitHub
@@ -197,20 +161,33 @@ docker run \
 - Push your work back up to your fork
 - Submit a Pull request so that we can review your changes and merge
 
-## Releases
+## Releasing
 
-to trigger a release you must tag the commit, then push to origin
+- Make a commit to bump the version in `mix.exs`
+- Tag the commit
+
+To trigger a release you must tag the commit, then push to origin.
+
 ```bash
-git tag -a 7.x.x -m "some stuff about the release"
-git push origin 7.x.x
+git tag -a 0.x.x -m "Some release details / link to release notes"
+git push origin 0.x.x
 ```
 
 ## License
 
-This repo is liscenced under Apache 2.0.
+This repo is licensed under Apache 2.0.
 
 ## Credits
 
 - [https://github.com/phoenixframework/phoenix](https://github.com/phoenixframework/phoenix) - The server is built with the amazing elixir framework.
 - [https://github.com/cainophile/cainophile](https://github.com/cainophile/cainophile) - A lot of this implementation leveraged the work already done on Cainophile.
-- [https://github.com/mcampa/phoenix-channels](https://github.com/mcampa/phoenix-channels) - The client library is ported from this library. 
+- [https://github.com/mcampa/phoenix-channels](https://github.com/mcampa/phoenix-channels) - The client library is ported from this library.
+
+
+## Sponsors
+
+We are building the features of Firebase using enterprise-grade, open source products. We support existing communities wherever possible, and if the products don’t exist we build them and open source them ourselves. Thanks to these sponsors who are making the OSS ecosystem better for everyone.
+
+[![Worklife VC](https://user-images.githubusercontent.com/10214025/90451355-34d71200-e11e-11ea-81f9-1592fd1e9146.png)](https://www.worklife.vc)
+[![New Sponsor](https://user-images.githubusercontent.com/10214025/90518111-e74bbb00-e198-11ea-8f88-c9e3c1aa4b5b.png)](https://github.com/sponsors/supabase)
+

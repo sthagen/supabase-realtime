@@ -1,11 +1,14 @@
 defmodule Realtime.MixProject do
   use Mix.Project
 
+  @version "0.0.0-automated"
+  @elixir "~> 1.5"
+
   def project do
     [
       app: :realtime,
-      version: "0.7.1",
-      elixir: "~> 1.5",
+      version: @version,
+      elixir: @elixir,
       elixirc_paths: elixirc_paths(Mix.env()),
       compilers: [:phoenix, :gettext] ++ Mix.compilers(),
       start_permanent: Mix.env() == :prod,
@@ -41,6 +44,8 @@ defmodule Realtime.MixProject do
       {:jason, "~> 1.0"},
       {:plug_cowboy, "~> 2.0"},
       {:epgsql, "~> 4.2"},
+      {:retry, "~> 0.14"},
+      {:mock, "~> 0.3.0", only: :test}
     ]
   end
 end

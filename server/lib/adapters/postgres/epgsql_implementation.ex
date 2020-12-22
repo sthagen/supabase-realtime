@@ -3,8 +3,7 @@
 
 defmodule Realtime.Adapters.Postgres.EpgsqlImplementation do
   @behaviour Realtime.Adapters.Postgres.AdapterBehaviour
-
-  alias Realtime.Replication.State
+  require Logger
 
   @impl true
   def init(config) do
@@ -19,25 +18,22 @@ defmodule Realtime.Adapters.Postgres.EpgsqlImplementation do
       |> Enum.map(fn pub -> ~s("#{pub}") end)
       |> Enum.join(",")
 
-    case :epgsql.connect(epgsql_config) do
-      {:ok, epgsql_pid} ->
-        {:ok, slot_name} =
-          create_replication_slot(epgsql_pid, Keyword.get(config, :slot, :temporary))
-
-        :ok =
-          :epgsql.start_replication(
-            epgsql_pid,
-            slot_name,
-            self(),
-            [],
-            '#{xlog}/#{offset}',
-            'proto_version \'1\', publication_names \'#{publication_names}\''
-          )
-
-        {:ok, %State{config: config, connection: epgsql_pid}}
-
-      {:error, reason} ->
-        {:stop, reason}
+    with {:ok, epgsql_pid} <- :epgsql.connect(epgsql_config),
+         {:ok, slot_name} <-
+           create_replication_slot(epgsql_pid, Keyword.get(config, :slot, :temporary)),
+         :ok <-
+           :epgsql.start_replication(
+             epgsql_pid,
+             slot_name,
+             self(),
+             [],
+             '#{xlog}/#{offset}',
+             'proto_version \'1\', publication_names \'#{publication_names}\''
+           ) do
+      {:ok, epgsql_pid}
+    else
+      reason ->
+        {:error, reason}
     end
   end
 
@@ -58,13 +54,11 @@ defmodule Realtime.Adapters.Postgres.EpgsqlImplementation do
       case slot do
         name when is_binary(name) ->
           # Simple query for replication mode so no prepared statements are supported
-          escaped_name = String.replace(name, "'", "\\'")
+          escaped_name = String.downcase(String.replace(name, "'", "\\'"))
+          query =
+            "SELECT COUNT(*) >= 1 FROM pg_replication_slots WHERE slot_name = '#{escaped_name}'"
 
-          {:ok, _, [{existing_slot}]} =
-            :epgsql.squery(
-              epgsql_pid,
-              "SELECT COUNT(*) >= 1 FROM pg_replication_slots WHERE slot_name = '#{escaped_name}'"
-            )
+          {:ok, _, [{existing_slot}]} = :epgsql.squery(epgsql_pid, query)
 
           case existing_slot do
             "t" ->
