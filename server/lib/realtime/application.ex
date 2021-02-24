@@ -6,6 +6,9 @@ defmodule Realtime.Application do
   use Application
   require Logger, warn: false
 
+  defmodule JwtSecretError, do: defexception([:message])
+  defmodule JwtClaimValidatorsError, do: defexception([:message])
+
   def start(_type, _args) do
     # Hostname must be a char list for some reason
     # Use this var to convert to sigil at connection
@@ -29,14 +32,33 @@ defmodule Realtime.Application do
 
     configuration_file = Application.fetch_env!(:realtime, :configuration_file)
 
-    db_retry_initial_delay = Application.fetch_env!(:realtime, :db_retry_initial_delay)
-    db_retry_maximum_delay = Application.fetch_env!(:realtime, :db_retry_maximum_delay)
-    db_retry_jitter = Application.fetch_env!(:realtime, :db_retry_jitter)
+    if Application.fetch_env!(:realtime, :secure_channels) do
+      if Application.fetch_env!(:realtime, :jwt_secret) == "" do
+        raise JwtSecretError, message: "JWT secret is missing"
+      end
+
+      case Application.fetch_env!(:realtime, :jwt_claim_validators) |> Jason.decode() do
+        {:ok, claims} when is_map(claims) ->
+          Application.put_env(:realtime, :jwt_claim_validators, claims)
+
+        _ ->
+          raise JwtClaimValidatorsError,
+            message: "JWT claim validators is not a valid JSON object"
+      end
+    end
 
     # List all child processes to be supervised
     children = [
       # Start the endpoint when the application starts
       RealtimeWeb.Endpoint,
+      {
+        Phoenix.PubSub,
+        name: Realtime.PubSub, adapter: Phoenix.PubSub.PG2
+      },
+      {
+        Realtime.ConfigurationManager,
+        filename: configuration_file
+      },
       {
         Realtime.Replication,
         # You can provide a different WAL position if desired, or default to
@@ -44,21 +66,8 @@ defmodule Realtime.Application do
         epgsql: epgsql_params,
         slot: slot_name,
         wal_position: {"0", "0"},
-        publications: ["supabase_realtime"],
-        conn_retry_initial_delay: db_retry_initial_delay,
-        conn_retry_maximum_delay: db_retry_maximum_delay,
-        conn_retry_jitter: db_retry_jitter
-      },
-      {
-        Realtime.ConfigurationManager,
-        filename: configuration_file
-      },
-      Realtime.SubscribersNotification,
-      {
-        Realtime.Connectors,
-        config: nil
-      },
-      Realtime.WebhookConnector
+        publications: ["supabase_realtime"]
+      }
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html

@@ -1,6 +1,9 @@
-import { Socket } from '@supabase/realtime-js'
+import React from 'react'
 import axios from 'axios'
+import { RealtimeClient } from '@supabase/realtime-js'
+
 const REALTIME_URL = process.env.REALTIME_URL || 'ws://localhost:4000/socket'
+import Link from 'next/link'
 
 export default class Index extends React.Component {
   constructor() {
@@ -13,7 +16,7 @@ export default class Index extends React.Component {
     }
     this.messageReceived = this.messageReceived.bind(this)
 
-    this.socket = new Socket(REALTIME_URL)
+    this.socket = new RealtimeClient(REALTIME_URL)
     this.channelList = []
   }
   componentDidMount() {
@@ -27,6 +30,9 @@ export default class Index extends React.Component {
     this.addChannel('realtime:public:users:id=eq.18')
     this.fetchData()
   }
+  componentWillUnmount() {
+    this.socket.disconnect()
+  }
   addChannel(topic) {
     let channel = this.socket.channel(topic)
     channel.on('INSERT', msg => this.messageReceived(topic, msg))
@@ -35,7 +41,7 @@ export default class Index extends React.Component {
     channel.on('UPDATE', msg => console.log('UPDATE', msg))
     channel.on('DELETE', msg => console.log('DELETE', msg))
     channel
-      .join()
+      .subscribe()
       .receive('ok', () => console.log('Connecting'))
       .receive('error', () => console.log('Failed'))
       .receive('timeout', () => console.log('Waiting...'))
@@ -69,6 +75,7 @@ export default class Index extends React.Component {
   render() {
     return (
       <div style={styles.main}>
+        <a>index</a> | <Link href="/stress">stress chart</Link>
         <div style={styles.row}>
           <div style={styles.col}>
             <h3>Changes</h3>

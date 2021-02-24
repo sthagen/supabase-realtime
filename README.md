@@ -1,5 +1,8 @@
 # Supabase Realtime
 
+> **⚠ WARNING: v0.10.0 Breaking Change **  
+> Channels connections are secured by default in production. See [Channels Authorization](#channels-authorization) for more info.
+
 Listens to changes in a PostgreSQL Database and broadcasts them over websockets.
 
 <p align="center"><kbd><img src="./examples/next-js/demo.gif" alt="Demo"/></kbd></p>
@@ -18,6 +21,7 @@ Listens to changes in a PostgreSQL Database and broadcasts them over websockets.
 - [Server](#server)
   - [Database set up](#database-set-up)
   - [Server set up](#server-set-up)
+  - [Channels Authorization](#channels-authorization)
 - [Contributing](#contributing)
 - [Releasing](#releasing)
 - [License](#license)
@@ -107,6 +111,9 @@ We have set up some simple examples that show how to use this server:
 ## Client libraries
 
 - Javascript: [@supabase/realtime-js](https://github.com/supabase/realtime-js)
+- Python: [@supabase/realtime-py](https://github.com/supabase/realtime-py)
+- Dart: [@supabase/realtime-dart](https://github.com/supabase/realtime-dart)
+- C#: [@supabase/realtime-csharp](https://github.com/supabase/realtime-csharp) [WIP]
 
 
 ## Server
@@ -136,7 +143,7 @@ docker run \
   -e DB_PORT=5432 \
   -e PORT=4000 \
   -e HOSTNAME='localhost' \
-  -e SECRET_KEY_BASE='SOMETHING_SUPER_SECRET' \
+  -e JWT_SECRET='SOMETHING_SUPER_SECRET' \
   -p 4000:4000 \
   supabase/realtime
 ```
@@ -144,14 +151,56 @@ docker run \
 **OPTIONS**
 
 ```sh
-DB_HOST       # {string} Database host URL
-DB_NAME       # {string} Postgres database name
-DB_USER       # {string} Database user
-DB_PASSWORD   # {string} Database password
-DB_PORT       # {number} Database port
-SLOT_NAME     # {string} A unique name for Postgres to track where this server has "listened until". If the server dies, it can pick up from the last position. This should be lowercase.
-PORT          # {number} Port which you can connect your client/listeners
+DB_HOST                 # {string}      Database host URL
+DB_NAME                 # {string}      Postgres database name
+DB_USER                 # {string}      Database user
+DB_PASSWORD             # {string}      Database password
+DB_PORT                 # {number}      Database port
+SLOT_NAME               # {string}      A unique name for Postgres to track where this server has "listened until". If the server dies, it can pick up from the last position. This should be lowercase.
+PORT                    # {number}      Port which you can connect your client/listeners
+SECURE_CHANNELS         # {string}     (options: 'true' or 'false') Enable/Disable channels authorization via JWT verification.
+JWT_SECRET              # {string}      HS algorithm octet key (e.g. "95x0oR8jq9unl9pOIx"). Only required if SECURE_CHANNELS is set to true.
+JWT_CLAIM_VALIDATORS    # {string}      Expected claim key/value pairs compared to JWT claims via equality checks in order to validate JWT. e.g. '{"iss": "Issuer", "nbf": 1610078130}'. This is optional but encouraged.
 ```
+
+**EXAMPLE: RUNNING SERVER WITH ALL OPTIONS**
+
+```sh
+# Update the environment variables to point to your own database
+docker run \
+  -e DB_HOST='docker.for.mac.host.internal' \
+  -e DB_NAME='postgres' \
+  -e DB_USER='postgres' \
+  -e DB_PASSWORD='postgres' \
+  -e DB_PORT=5432 \
+  -e PORT=4000 \
+  -e HOSTNAME='localhost' \
+  -e JWT_SECRET='SOMETHING_SUPER_SECRET' \
+  -p 4000:4000 \
+  -e SECURE_CHANNELS='true' \
+  -e JWT_SECRET='jwt-secret' \
+  -e JWT_CLAIM_VALIDATORS='{"iss": "Issuer", "nbf": 1610078130}' \
+  supabase/realtime
+```
+
+### Channels Authorization
+
+Channels connections are authorized via JWT verification. Only supports JWTs signed with the following algorithms:
+  - HS256
+  - HS384
+  - HS512
+
+Verify JWT claims by setting JWT_CLAIM_VALIDATORS:
+
+  > e.g. {'iss': 'Issuer', 'nbf': 1610078130}
+  >
+  > Then JWT's "iss" value must equal "Issuer" and "nbf" value must equal 1610078130.
+
+**NOTE:** JWT expiration is checked automatically. 
+
+**Development**: Channels are not secure by default. Set SECURE_CHANNELS to `true` to test JWT verification locally.
+
+**Production**: Channels are secure by default and you must set JWT_SECRET. Set SECURE_CHANNELS to `false` to proceed without checking authorization.
 
 ## Contributing
 
