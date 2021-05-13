@@ -32,6 +32,16 @@ defmodule Realtime.Application do
       ssl: Application.fetch_env!(:realtime, :db_ssl)
     }
 
+    epgsql_params =
+      with {:ok, ip_version} <- Application.fetch_env!(:realtime, :db_ip_version),
+           {:error, :einval} <- :inet.parse_address(epgsql_params.host) do
+        # only add :tcp_opts to epgsql_params when ip_version is present and host
+        # is not an IP address.
+        Map.put(epgsql_params, :tcp_opts, [ip_version])
+      else
+        _ -> epgsql_params
+      end
+
     configuration_file = Application.fetch_env!(:realtime, :configuration_file)
 
     if Application.fetch_env!(:realtime, :secure_channels) do
