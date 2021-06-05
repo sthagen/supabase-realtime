@@ -62,6 +62,13 @@ A few reasons:
 2. Decoupling. For example, if you want to send a new slack message every time someone makes a new purchase you might build that functionality directly into your API. This allows you to decouple your async functionality from your API.
 3. This is built with Phoenix, an [extremely scalable Elixir framework](https://www.phoenixframework.org/blog/the-road-to-2-million-websocket-connections).
 
+### Does this server guarentee delivery of every data change?
+
+Not yet! Due to the following limitations:
+
+1. Postgres database runs out of disk space due to Write-Ahead Logging (WAL) buildup, which can crash the database and prevent Realtime server from streaming replication and broadcasting changes.
+2. Realtime server can crash due to a larger replication lag than available memory, forcing the creation of a new replication slot and resetting streaming replication to read from the latest WAL data.
+3. When Realtime server falls too far behind for any reason, for example disconnecting from database as WAL continues to build up, then database can delete WAL segments the server still needs to read from, for example after reconnecting.
 
 ## Quick start
 
@@ -191,6 +198,7 @@ PORT                    # {number}      Port which you can connect your client/l
 SECURE_CHANNELS         # {string}      (options: 'true'/'false') Enable/Disable channels authorization via JWT verification.
 JWT_SECRET              # {string}      HS algorithm octet key (e.g. "95x0oR8jq9unl9pOIx"). Only required if SECURE_CHANNELS is set to true.
 JWT_CLAIM_VALIDATORS    # {string}      Expected claim key/value pairs compared to JWT claims via equality checks in order to validate JWT. e.g. '{"iss": "Issuer", "nbf": 1610078130}'. This is optional but encouraged.
+MAX_REPLICATION_LAG_MB  # {number}      If set, when the replication lag exceeds MAX_REPLICATION_LAG_MB (value must be a positive integer in megabytes), then replication slot is dropped, Realtime is restarted, and a new slot is created. Warning: setting MAX_REPLICATION_SLOT_MB could cause database changes to be lost when the replication slot is dropped.
 ```
 
 **EXAMPLE: RUNNING SERVER WITH ALL OPTIONS**
@@ -209,6 +217,7 @@ docker run                                                       \
   -e SECURE_CHANNELS='true'                                      \
   -e JWT_SECRET='SOMETHING_SUPER_SECRET'                         \
   -e JWT_CLAIM_VALIDATORS='{"iss": "Issuer", "nbf": 1610078130}' \
+  -e MAX_REPLICATION_LAG_MB=1000                                 \
   -p 4000:4000                                                   \
   supabase/realtime
 ```
