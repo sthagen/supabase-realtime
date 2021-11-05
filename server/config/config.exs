@@ -58,6 +58,12 @@ db_ip_version =
   %{"ipv4" => :inet, "ipv6" => :inet6}
   |> Map.fetch(System.get_env("DB_IP_VERSION", "") |> String.downcase())
 
+# Expose Prometheus metrics
+# Defaults to true in development and false in production
+expose_metrics = System.get_env("EXPOSE_METRICS", "true") == "true"
+
+webhook_headers = System.get_env("WEBHOOK_HEADERS")
+
 config :realtime,
   app_port: app_port,
   db_host: db_host,
@@ -73,7 +79,10 @@ config :realtime,
   secure_channels: secure_channels,
   jwt_secret: jwt_secret,
   jwt_claim_validators: jwt_claim_validators,
-  max_replication_lag_in_mb: max_replication_lag_in_mb
+  max_replication_lag_in_mb: max_replication_lag_in_mb,
+  expose_metrics: expose_metrics,
+  webhook_default_headers: [{"content-type", "application/json"}],
+  webhook_headers: webhook_headers
 
 # Configures the endpoint
 config :realtime, RealtimeWeb.Endpoint,
@@ -89,6 +98,9 @@ config :logger, :console,
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
+
+config :realtime, Realtime.Metrics.PromEx,
+  disabled: !expose_metrics
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
