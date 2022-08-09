@@ -5,13 +5,15 @@ defmodule RealtimeWeb.RealtimeChannelTest do
   import Mock
   alias Phoenix.Socket
   alias Phoenix.Socket.Broadcast
-  alias RealtimeWeb.{ChannelsAuthorization, UserSocket, RealtimeChannel}
-
-  @claims %{"role" => "authenticated"}
+  alias RealtimeWeb.{ChannelsAuthorization, Joken.CurrentTime, UserSocket, RealtimeChannel}
 
   setup do
+    {:ok, _pid} = start_supervised(CurrentTime.Mock)
+
     with_mock ChannelsAuthorization,
-      authorize: fn _token -> {:ok, @claims} end do
+      authorize: fn _token ->
+        {:ok, %{"exp" => Joken.current_time() + 1_000, "role" => "authenticated"}}
+      end do
       {:ok, _, socket} =
         UserSocket
         |> socket("", %{access_token: "access_token"})
@@ -21,38 +23,53 @@ defmodule RealtimeWeb.RealtimeChannelTest do
     end
   end
 
-  test "INSERT message is pushed to the client", %{socket: %{assigns: %{id: id}}} do
+  test "INSERT message is pushed to the client", %{
+    socket: %{assigns: %{pg_change_params: [%{id: id}]}}
+  } do
     change = %{
       schema: "public",
       table: "users",
       type: "INSERT"
     }
 
-    broadcast_change("realtime:*", Map.put(change, :subscription_ids, MapSet.new([id])))
+    broadcast_change(
+      "postgres_changes:#{Ecto.UUID.cast!(id)}",
+      Map.put(change, :subscription_ids, MapSet.new([id]))
+    )
 
     assert_push("INSERT", ^change)
   end
 
-  test "UPDATE message is pushed to the client", %{socket: %{assigns: %{id: id}}} do
+  test "UPDATE message is pushed to the client", %{
+    socket: %{assigns: %{pg_change_params: [%{id: id}]}}
+  } do
     change = %{
       schema: "public",
       table: "users",
       type: "UPDATE"
     }
 
-    broadcast_change("realtime:*", Map.put(change, :subscription_ids, MapSet.new([id])))
+    broadcast_change(
+      "postgres_changes:#{Ecto.UUID.cast!(id)}",
+      Map.put(change, :subscription_ids, MapSet.new([id]))
+    )
 
     assert_push("UPDATE", ^change)
   end
 
-  test "DELETE message is pushed to the client", %{socket: %{assigns: %{id: id}}} do
+  test "DELETE message is pushed to the client", %{
+    socket: %{assigns: %{pg_change_params: [%{id: id}]}}
+  } do
     change = %{
       schema: "public",
       table: "users",
       type: "DELETE"
     }
 
-    broadcast_change("realtime:*", Map.put(change, :subscription_ids, MapSet.new([id])))
+    broadcast_change(
+      "postgres_changes:#{Ecto.UUID.cast!(id)}",
+      Map.put(change, :subscription_ids, MapSet.new([id]))
+    )
 
     assert_push("DELETE", ^change)
   end
@@ -70,7 +87,7 @@ defmodule RealtimeWeb.RealtimeChannelTest do
   test "join channel when token is invalid" do
     with_mock ChannelsAuthorization,
       authorize: fn _token -> :error end do
-      assert {:error, %{reason: "error occurred when joining realtime:* with user token"}} =
+      assert {:error, %{reason: "attempted to join channel realtime:* with invalid token"}} =
                UserSocket
                |> socket("", %{access_token: "access_token"})
                |> subscribe_and_join(RealtimeChannel, "realtime:*", %{"user_token" => "token123"})
@@ -79,7 +96,9 @@ defmodule RealtimeWeb.RealtimeChannelTest do
 
   test "handle_info/sync_subscription, when access token exists" do
     with_mock ChannelsAuthorization,
-      authorize: fn _token -> {:ok, @claims} end do
+      authorize: fn _token ->
+        {:ok, %{"exp" => Joken.current_time() + 1_000, "role" => "authenticated"}}
+      end do
       socket =
         UserSocket
         |> socket()
@@ -98,7 +117,9 @@ defmodule RealtimeWeb.RealtimeChannelTest do
 
   test "handle_info/sync_subscription, when access token does not exist" do
     with_mock ChannelsAuthorization,
-      authorize: fn _token -> {:ok, @claims} end do
+      authorize: fn _token ->
+        {:ok, %{"exp" => Joken.current_time() + 1_000, "role" => "authenticated"}}
+      end do
       socket =
         UserSocket
         |> socket()
@@ -115,27 +136,31 @@ defmodule RealtimeWeb.RealtimeChannelTest do
     end
   end
 
-  test "handle_info/verify_access_token, when access token is valid", %{socket: socket} do
+  test "handle_info/verify_token, when access token is valid", %{socket: socket} do
     with_mock ChannelsAuthorization,
-      authorize: fn _token -> {:ok, @claims} end do
-      assert {:noreply, %Socket{assigns: %{verify_ref: new_ref}}} =
-               RealtimeChannel.handle_info(:verify_access_token, socket)
+      authorize: fn _token ->
+        {:ok, %{"exp" => Joken.current_time() + 1_000, "role" => "authenticated"}}
+      end do
+      assert {:noreply, %Socket{assigns: %{verify_token_ref: new_ref}}} =
+               RealtimeChannel.handle_info(:verify_token, socket)
 
-      assert socket.assigns.verify_ref != new_ref
+      assert socket.assigns.verify_token_ref != new_ref
     end
   end
 
-  test "handle_info/verify_access_token, when access token is invalid", %{socket: socket} do
+  test "handle_info/verify_token, when access token is invalid", %{socket: socket} do
     with_mock ChannelsAuthorization,
       authorize: fn _token -> :error end do
       assert {:stop, :invalid_access_token, _} =
-               RealtimeChannel.handle_info(:verify_access_token, socket)
+               RealtimeChannel.handle_info(:verify_token, socket)
     end
   end
 
   test "client sends valid access token", %{socket: socket} do
     with_mock ChannelsAuthorization,
-      authorize: fn _token -> {:ok, @claims} end do
+      authorize: fn _token ->
+        {:ok, %{"exp" => Joken.current_time() + 1_000, "role" => "authenticated"}}
+      end do
       push(socket, "access_token", %{"access_token" => "fresh_token_123"})
 
       assert %Socket{assigns: %{access_token: "fresh_token_123"}} =

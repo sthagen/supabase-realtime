@@ -5,13 +5,13 @@ defmodule Realtime.RLS.Subscriptions do
   alias Realtime.RLS.Repo
   alias Realtime.RLS.Subscriptions.Subscription
 
-  @spec create_topic_subscriber(%{topic: String.t(), id: Ecto.UUID.raw(), claims: map()}) ::
+  @spec create_topic_subscribers(list(%{topic: String.t(), id: Ecto.UUID.raw(), claims: map()})) ::
           {:ok, term()}
           | {:error, term()}
           | {:error, Ecto.Multi.name(), term(), %{required(Ecto.Multi.name()) => term()}}
-  def create_topic_subscriber(params) do
+  def create_topic_subscribers(params_list) do
     Multi.new()
-    |> Multi.put(:params_list, [params])
+    |> Multi.put(:params_list, params_list)
     |> fetch_database_roles()
     |> fetch_publication_tables()
     |> enrich_subscription_params()
@@ -49,7 +49,7 @@ defmodule Realtime.RLS.Subscriptions do
   defp fetch_database_roles(%Multi{} = multi) do
     Multi.run(multi, :database_roles, fn _, _ ->
       Repo.query(
-        "select rolname from pg_authid",
+        "select rolname from pg_roles",
         []
       )
       |> case do

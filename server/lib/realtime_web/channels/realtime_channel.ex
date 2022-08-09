@@ -6,42 +6,142 @@ defmodule RealtimeWeb.RealtimeChannel do
   alias Phoenix.Socket.Broadcast
   alias Realtime.SubscriptionManager
   alias Realtime.Metrics.SocketMonitor
-  alias RealtimeWeb.{ChannelsAuthorization, Endpoint}
+  alias RealtimeWeb.{ChannelsAuthorization, Endpoint, Presence}
 
-  @verify_token_interval 60_000
-
-  def join("realtime:", _, _socket) do
-    {:error, %{reason: "realtime subtopic does not exist"}}
-  end
+  @verify_token_ms 1_000 * 60 * 5
 
   def join(
         "realtime:" <> subtopic = topic,
         params,
-        %Socket{channel_pid: channel_pid, assigns: %{access_token: access_token}} = socket
+        %Socket{
+          assigns: %{access_token: access_token},
+          channel_pid: channel_pid,
+          serializer: serializer,
+          topic: topic,
+          transport_pid: transport_pid
+        } = socket
       ) do
-    token =
-      case params do
-        %{"user_token" => token} -> token
-        _ -> access_token
+    with token when is_binary(token) <-
+           (case params do
+              %{"user_token" => token} -> token
+              _ -> access_token
+            end),
+         {:ok, %{"exp" => exp} = claims} when is_integer(exp) <-
+           ChannelsAuthorization.authorize(token),
+         exp_diff when exp_diff > 0 <- exp - Joken.current_time() do
+      verify_token_ref =
+        Process.send_after(
+          self(),
+          :verify_token,
+          min(@verify_token_ms, exp_diff * 1_000)
+        )
+
+      is_new_api =
+        case params do
+          %{"configs" => _} -> true
+          _ -> false
+        end
+
+      if is_new_api do
+        params["configs"]["realtime"]
+        |> case do
+          [_ | _] = db_changes_params ->
+            Enum.map(db_changes_params, fn p ->
+              case p do
+                %{"schema" => schema, "table" => table, "filter" => filter} ->
+                  "#{schema}:#{table}:#{filter}"
+
+                %{"schema" => schema, "table" => table} ->
+                  "#{schema}:#{table}"
+
+                %{"schema" => schema} ->
+                  "#{schema}"
+              end
+            end)
+
+          _ ->
+            []
+        end
+        |> Enum.map(&String.downcase/1)
+        |> MapSet.new()
+        |> MapSet.to_list()
+        |> case do
+          [_ | _] = params_list ->
+            pg_change_params =
+              params_list
+              |> Enum.map(fn subtopic ->
+                %{
+                  id: Ecto.UUID.bingenerate(),
+                  channel_pid: channel_pid,
+                  claims: claims,
+                  topic: subtopic
+                }
+              end)
+
+            pg_change_params
+            |> SubscriptionManager.track_topic_subscribers()
+            |> case do
+              :ok -> {:ok, pg_change_params}
+              :error -> :error
+            end
+
+          _ ->
+            {:ok, []}
+        end
+      else
+        pg_change_params = [
+          %{
+            id: Ecto.UUID.bingenerate(),
+            channel_pid: channel_pid,
+            claims: claims,
+            topic: subtopic
+          }
+        ]
+
+        pg_change_params
+        |> SubscriptionManager.track_topic_subscribers()
+        |> case do
+          :ok -> {:ok, pg_change_params}
+          :error -> :error
+        end
       end
+      |> case do
+        {:ok, pg_change_params} ->
+          PubSub.subscribe(Realtime.PubSub, "subscription_manager")
 
-    with {:ok, claims} <- ChannelsAuthorization.authorize(token),
-         bin_id <- Ecto.UUID.bingenerate(),
-         :ok <-
-           SubscriptionManager.track_topic_subscriber(%{
-             id: bin_id,
-             channel_pid: channel_pid,
-             claims: claims,
-             topic: subtopic
-           }),
-         :ok <- PubSub.subscribe(Realtime.PubSub, "subscription_manager") do
-      SocketMonitor.track_channel(socket)
-      send(self(), :after_join)
-      ref = Process.send_after(self(), :verify_access_token, @verify_token_interval)
+          SocketMonitor.track_channel(socket)
 
-      {:ok, assign(socket, %{id: bin_id, access_token: token, verify_ref: ref})}
+          presence_key =
+            with key when is_binary(key) <- params["configs"]["presence"]["key"],
+                 true <- String.length(key) > 0 do
+              key
+            else
+              _ -> Ecto.UUID.generate()
+            end
+
+          for %{id: id} <- pg_change_params do
+            metadata = {:subscriber_fastlane, transport_pid, serializer, topic, is_new_api}
+            Endpoint.subscribe("postgres_changes:#{Ecto.UUID.cast!(id)}", metadata: metadata)
+          end
+
+          send(self(), :after_join)
+
+          {:ok,
+           assign(socket, %{
+             access_token: token,
+             ack_broadcast: !!params["configs"]["broadcast"]["ack"],
+             is_new_api: is_new_api,
+             pg_change_params: pg_change_params,
+             presence_key: presence_key,
+             self_broadcast: !!params["configs"]["broadcast"]["self"],
+             verify_token_ref: verify_token_ref
+           })}
+
+        :error ->
+          {:error, %{reason: "unable to insert topic subscriptions into database"}}
+      end
     else
-      _ -> {:error, %{reason: "error occurred when joining #{topic} with user token"}}
+      _ -> {:error, %{reason: "attempted to join channel #{topic} with invalid token"}}
     end
   end
 
@@ -53,22 +153,15 @@ defmodule RealtimeWeb.RealtimeChannel do
   def handle_info(
         :after_join,
         %Socket{
-          assigns: %{id: id, access_token: access_token},
-          serializer: serializer,
-          topic: topic,
-          transport_pid: transport_pid
+          assigns: %{is_new_api: is_new_api},
+          topic: topic
         } = socket
       ) do
-    with {:ok, _} <- ChannelsAuthorization.authorize(access_token),
-         :ok <- Endpoint.unsubscribe(topic),
-         :ok <-
-           Endpoint.subscribe(topic,
-             metadata: {:subscriber_fastlane, transport_pid, serializer, id}
-           ) do
-      {:noreply, socket}
-    else
-      error -> {:stop, error, socket}
+    if is_new_api do
+      push(socket, "presence_state", Presence.list(topic))
     end
+
+    {:noreply, socket}
   end
 
   def handle_info(
@@ -77,23 +170,12 @@ defmodule RealtimeWeb.RealtimeChannel do
           topic: "subscription_manager"
         },
         %Socket{
-          assigns: %{id: id, access_token: access_token},
-          channel_pid: channel_pid,
-          topic: "realtime:" <> subtopic
+          assigns: %{pg_change_params: [_ | _] = pg_change_params}
         } = socket
       ) do
-    with {:ok, claims} <- ChannelsAuthorization.authorize(access_token),
-         :ok <-
-           SubscriptionManager.track_topic_subscriber(%{
-             id: id,
-             channel_pid: channel_pid,
-             claims: claims,
-             topic: subtopic
-           }) do
-      {:noreply, socket}
-    else
-      _ -> {:stop, :sync_subscription_error, socket}
-    end
+    :ok = SubscriptionManager.track_topic_subscribers(pg_change_params)
+
+    {:noreply, socket}
   end
 
   def handle_info(
@@ -107,18 +189,23 @@ defmodule RealtimeWeb.RealtimeChannel do
   end
 
   def handle_info(
-        :verify_access_token,
+        :verify_token,
         %Socket{
-          assigns: %{access_token: access_token, verify_ref: ref}
+          assigns: %{access_token: access_token, verify_token_ref: ref}
         } = socket
       ) do
     Process.cancel_timer(ref)
 
-    case ChannelsAuthorization.authorize(access_token) do
-      {:ok, _} ->
-        ref = Process.send_after(self(), :verify_access_token, @verify_token_interval)
-        {:noreply, assign(socket, :verify_ref, ref)}
-
+    with {:ok, %{"exp" => exp}} <- ChannelsAuthorization.authorize(access_token),
+         exp_diff when exp_diff > 0 <- exp - Joken.current_time(),
+         verify_token_ref <-
+           Process.send_after(
+             self(),
+             :verify_token,
+             min(@verify_token_ms, exp_diff * 1_000)
+           ) do
+      {:noreply, assign(socket, :verify_token_ref, verify_token_ref)}
+    else
       _ ->
         {:stop, :invalid_access_token, socket}
     end
@@ -128,36 +215,103 @@ defmodule RealtimeWeb.RealtimeChannel do
         "access_token",
         %{"access_token" => fresh_token},
         %Socket{
-          assigns: %{id: id, access_token: access_token},
-          channel_pid: channel_pid,
-          topic: "realtime:" <> subtopic
+          assigns: %{
+            access_token: access_token,
+            pg_change_params: pg_change_params,
+            verify_token_ref: ref
+          }
         } = socket
       )
       when is_binary(fresh_token) do
-    case ChannelsAuthorization.authorize(fresh_token) do
-      {:ok, fresh_claims} ->
-        new_socket =
-          if fresh_token != access_token do
-            SubscriptionManager.track_topic_subscriber(%{
-              id: id,
-              channel_pid: channel_pid,
-              claims: fresh_claims,
-              topic: subtopic
-            })
+    Process.cancel_timer(ref)
 
-            assign(socket, :access_token, fresh_token)
-          else
-            socket
-          end
+    with {:ok, %{"exp" => exp} = fresh_claims} <- ChannelsAuthorization.authorize(fresh_token),
+         exp_diff when exp_diff > 0 <- exp - Joken.current_time(),
+         verify_token_ref <-
+           Process.send_after(
+             self(),
+             :verify_token,
+             min(@verify_token_ms, exp_diff * 1_000)
+           ) do
+      new_socket =
+        if fresh_token != access_token do
+          new_params =
+            pg_change_params
+            |> Enum.map(&Map.put(&1, :claims, fresh_claims))
 
-        {:noreply, new_socket}
+          :ok = SubscriptionManager.track_topic_subscribers(new_params)
 
+          assign(socket, %{
+            access_token: fresh_token,
+            pg_change_params: new_params,
+            verify_token_ref: verify_token_ref
+          })
+        else
+          assign(socket, :verify_token_ref, verify_token_ref)
+        end
+
+      {:noreply, new_socket}
+    else
       _ ->
         {:stop, :invalid_access_token, socket}
     end
   end
 
-  def handle_in("access_token", _, socket) do
+  def handle_in(
+        "broadcast" = type,
+        payload,
+        %Socket{
+          assigns: %{
+            is_new_api: true,
+            ack_broadcast: ack_broadcast,
+            self_broadcast: self_broadcast
+          },
+          topic: topic
+        } = socket
+      ) do
+    if self_broadcast do
+      Endpoint.broadcast(topic, type, payload)
+    else
+      Endpoint.broadcast_from(self(), topic, type, payload)
+    end
+
+    if ack_broadcast do
+      {:reply, :ok, socket}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_in(
+        "presence",
+        %{"event" => event, "payload" => payload},
+        %Socket{assigns: %{is_new_api: true, presence_key: presence_key}, topic: topic} = socket
+      ) do
+    result =
+      event
+      |> String.downcase()
+      |> case do
+        "track" ->
+          with {:error, {:already_tracked, _, _, _}} <-
+                 Presence.track(self(), topic, presence_key, payload),
+               {:ok, _} <- Presence.update(self(), topic, presence_key, payload) do
+            :ok
+          else
+            {:ok, _} -> :ok
+            {:error, _} -> :error
+          end
+
+        "untrack" ->
+          Presence.untrack(self(), topic, presence_key)
+
+        _ ->
+          :error
+      end
+
+    {:reply, result, socket}
+  end
+
+  def handle_in(_, _, socket) do
     {:noreply, socket}
   end
 end
