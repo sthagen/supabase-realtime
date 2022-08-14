@@ -13,26 +13,30 @@ defmodule Realtime.MessageDispatcher do
           Phoenix.Socket.Broadcast.t()
         ) :: :ok
   def dispatch([_ | _] = topic_subscriptions, _from, %Broadcast{payload: payload}) do
-    new_payload = Map.drop(payload, [:subscription_ids])
-
     Enum.reduce(topic_subscriptions, %{}, fn
-      {_pid, {:subscriber_fastlane, fastlane_pid, serializer, join_topic, is_new_api}}, cache ->
-        new_payload =
-          if is_new_api do
-            %Broadcast{
+      {_pid, {:subscriber_fastlane, fastlane_pid, serializer, id, join_topic, event, is_new_api}},
+      cache ->
+        if is_new_api do
+          if event == "*" || event == payload.type do
+            new_payload = %Broadcast{
               topic: join_topic,
-              event: "realtime",
-              payload: %{payload: new_payload, event: new_payload.type}
+              event: "postgres_changes",
+              payload: %{id: id, data: payload}
             }
-          else
-            %Broadcast{
-              topic: join_topic,
-              event: new_payload.type,
-              payload: new_payload
-            }
-          end
 
-        broadcast_message(cache, fastlane_pid, new_payload, serializer)
+            broadcast_message(cache, fastlane_pid, new_payload, serializer)
+          else
+            cache
+          end
+        else
+          new_payload = %Broadcast{
+            topic: join_topic,
+            event: payload.type,
+            payload: payload
+          }
+
+          broadcast_message(cache, fastlane_pid, new_payload, serializer)
+        end
 
       _, cache ->
         cache

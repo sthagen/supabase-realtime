@@ -43,38 +43,17 @@ defmodule RealtimeWeb.RealtimeChannel do
         end
 
       if is_new_api do
-        params["configs"]["realtime"]
-        |> case do
-          [_ | _] = db_changes_params ->
-            Enum.map(db_changes_params, fn p ->
-              case p do
-                %{"schema" => schema, "table" => table, "filter" => filter} ->
-                  "#{schema}:#{table}:#{filter}"
-
-                %{"schema" => schema, "table" => table} ->
-                  "#{schema}:#{table}"
-
-                %{"schema" => schema} ->
-                  "#{schema}"
-              end
-            end)
-
-          _ ->
-            []
-        end
-        |> Enum.map(&String.downcase/1)
-        |> MapSet.new()
-        |> MapSet.to_list()
+        params["configs"]["postgres_changes"]
         |> case do
           [_ | _] = params_list ->
             pg_change_params =
               params_list
-              |> Enum.map(fn subtopic ->
+              |> Enum.map(fn params ->
                 %{
-                  id: Ecto.UUID.bingenerate(),
+                  id: Ecto.UUID.generate(),
                   channel_pid: channel_pid,
                   claims: claims,
-                  topic: subtopic
+                  params: params
                 }
               end)
 
@@ -89,12 +68,24 @@ defmodule RealtimeWeb.RealtimeChannel do
             {:ok, []}
         end
       else
+        params =
+          case String.split(subtopic, ":", parts: 3) do
+            [schema] ->
+              %{"schema" => schema}
+
+            [schema, table] ->
+              %{"schema" => schema, "table" => table}
+
+            [schema, table, filter] ->
+              %{"schema" => schema, "table" => table, "filter" => filter}
+          end
+
         pg_change_params = [
           %{
-            id: Ecto.UUID.bingenerate(),
+            id: Ecto.UUID.generate(),
             channel_pid: channel_pid,
             claims: claims,
-            topic: subtopic
+            params: params
           }
         ]
 
@@ -119,23 +110,37 @@ defmodule RealtimeWeb.RealtimeChannel do
               _ -> Ecto.UUID.generate()
             end
 
-          for %{id: id} <- pg_change_params do
-            metadata = {:subscriber_fastlane, transport_pid, serializer, topic, is_new_api}
-            Endpoint.subscribe("postgres_changes:#{Ecto.UUID.cast!(id)}", metadata: metadata)
+          for %{id: id, params: params} <- pg_change_params do
+            metadata =
+              {:subscriber_fastlane, transport_pid, serializer, id, topic,
+               params |> Map.get("event", "") |> String.upcase(), is_new_api}
+
+            Endpoint.subscribe("postgres_changes:#{id}", metadata: metadata)
           end
 
           send(self(), :after_join)
 
-          {:ok,
-           assign(socket, %{
-             access_token: token,
-             ack_broadcast: !!params["configs"]["broadcast"]["ack"],
-             is_new_api: is_new_api,
-             pg_change_params: pg_change_params,
-             presence_key: presence_key,
-             self_broadcast: !!params["configs"]["broadcast"]["self"],
-             verify_token_ref: verify_token_ref
-           })}
+          {
+            :ok,
+            %{
+              postgres_changes:
+                Enum.map(pg_change_params, fn %{id: id, params: params} ->
+                  Map.put(params, :id, id)
+                end)
+            },
+            assign(
+              socket,
+              %{
+                access_token: token,
+                ack_broadcast: !!params["configs"]["broadcast"]["ack"],
+                is_new_api: is_new_api,
+                pg_change_params: pg_change_params,
+                presence_key: presence_key,
+                self_broadcast: !!params["configs"]["broadcast"]["self"],
+                verify_token_ref: verify_token_ref
+              }
+            )
+          }
 
         :error ->
           {:error, %{reason: "unable to insert topic subscriptions into database"}}
