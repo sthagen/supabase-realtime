@@ -36,44 +36,43 @@ defmodule Realtime.SubscriptionManager do
     end
   end
 
-  @spec track_topic_subscribers(
-          list(%{
-            id: Ecto.UUID.t(),
-            channel_pid: pid(),
-            claims: map(),
-            params: map()
-          })
-        ) :: :ok | :error
-  def track_topic_subscribers(topic_subs) do
-    GenServer.call(__MODULE__, {:track_topic_subscribers, topic_subs}, 15_000)
+  @spec track_topic_subscriber(%{
+          channel_pid: pid(),
+          topic: String.t(),
+          id: Ecto.UUID.raw(),
+          claims: map()
+        }) :: :ok | :error
+  def track_topic_subscriber(topic_sub) do
+    GenServer.call(__MODULE__, {:track_topic_subscriber, topic_sub}, 15_000)
   end
 
   def handle_call(
         {
-          :track_topic_subscribers,
-          topic_subs
+          :track_topic_subscriber,
+          %{
+            channel_pid: channel_pid,
+            topic: topic,
+            id: id,
+            claims: claims
+          }
         },
         _from,
         %{replication_mode: "RLS", subscription_params: sub_params} = state
       ) do
     try do
-      topic_subs
-      |> Enum.map(&Map.drop(&1, [:channel_pid]))
-      |> Subscriptions.create_topic_subscribers()
+      Subscriptions.create_topic_subscriber(%{topic: topic, id: id, claims: claims})
     catch
       :error, error ->
         error |> inspect() |> Logger.error()
         :error
     end
     |> case do
-      {:ok, _} ->
-        channel_pid = topic_subs |> List.first() |> Map.get(:channel_pid)
-
+      {:ok, %{enriched_subscription_params: [enriched_params]}} ->
         if sub_params |> Map.get(channel_pid) |> is_nil() do
           Process.monitor(channel_pid)
         end
 
-        new_state = Kernel.put_in(state, [:subscription_params, channel_pid], topic_subs)
+        new_state = Kernel.put_in(state, [:subscription_params, channel_pid], enriched_params)
 
         {:reply, :ok, new_state}
 
@@ -82,7 +81,7 @@ defmodule Realtime.SubscriptionManager do
     end
   end
 
-  def handle_call({:track_topic_subscribers, _}, _from, %{replication_mode: "STREAM"} = state),
+  def handle_call({:track_topic_subscriber, _}, _from, %{replication_mode: "STREAM"} = state),
     do: {:reply, :ok, state}
 
   def handle_info(
@@ -94,7 +93,6 @@ defmodule Realtime.SubscriptionManager do
     try do
       sub_params
       |> Map.values()
-      |> List.flatten()
       |> Subscriptions.sync_subscriptions()
     catch
       :error, error -> error |> inspect() |> Logger.error()
@@ -121,11 +119,9 @@ defmodule Realtime.SubscriptionManager do
         {nil, sub_params} ->
           sub_params
 
-        {params, new_sub_params} ->
+        {sub_params, new_sub_params} ->
           try do
-            for %{id: id} <- params do
-              Subscriptions.delete_topic_subscriber(id)
-            end
+            Subscriptions.delete_topic_subscriber(sub_params)
           catch
             :error, error -> error |> inspect() |> Logger.error()
           end

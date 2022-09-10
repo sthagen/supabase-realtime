@@ -11,20 +11,18 @@ defmodule Realtime.SubscriptionManagerTest do
     :ok
   end
 
-  test "track_topic_subscribers/1" do
+  test "track_topic_subscriber/1" do
     mess = {
-      :track_topic_subscribers,
-      [
-        %{
-          channel_pid: self(),
-          topic: "test_topic",
-          id: @subscription_id,
-          claims: @claims
-        }
-      ]
+      :track_topic_subscriber,
+      %{
+        channel_pid: self(),
+        topic: "test_topic",
+        id: @subscription_id,
+        claims: @claims
+      }
     }
 
-    assert :ok == SubscriptionManager.track_topic_subscribers(mess)
+    assert :ok == SubscriptionManager.track_topic_subscriber(mess)
   end
 
   test "init/1" do
@@ -44,17 +42,15 @@ defmodule Realtime.SubscriptionManagerTest do
     end
   end
 
-  test "handle_call/track_topic_subscribers, when subscription_params is empty" do
+  test "handle_call/track_topic_subscriber, when subscription_params is empty" do
     mess = {
-      :track_topic_subscribers,
-      [
-        %{
-          channel_pid: self(),
-          params: %{"schema" => "*"},
-          id: @subscription_id,
-          claims: @claims
-        }
-      ]
+      :track_topic_subscriber,
+      %{
+        channel_pid: self(),
+        topic: "test_topic",
+        id: @subscription_id,
+        claims: @claims
+      }
     }
 
     state = %{replication_mode: "RLS", subscription_params: %{}}
@@ -64,44 +60,44 @@ defmodule Realtime.SubscriptionManagerTest do
        %{
          replication_mode: "RLS",
          subscription_params: %{
-           self() => [
-             %{
-               channel_pid: self(),
-               params: %{"schema" => "*"},
-               id: @subscription_id,
-               claims: @claims
-             }
-           ]
+           self() => %{
+             entities: [],
+             filters: [],
+             topic: "test_topic",
+             id: "bbb51e4e-f371-4463-bf0a-af8f56dc9a71",
+             claims: %{"role" => "authenticated"},
+             claims_role: "authenticated"
+           }
          }
        }}
 
     assert expected == SubscriptionManager.handle_call(mess, self(), state)
   end
 
-  test "handle_call/track_topic_subscribers, when subscription_params is not empty" do
+  test "handle_call/track_topic_subscriber, when subscription_params is not empty" do
+    {_, bin} = Ecto.UUID.dump(@subscription_id)
+
     mess = {
-      :track_topic_subscribers,
-      [
-        %{
-          channel_pid: self(),
-          params: %{"schema" => "public", "table" => "*"},
-          id: @subscription_id,
-          claims: @claims
-        }
-      ]
+      :track_topic_subscriber,
+      %{
+        channel_pid: self(),
+        topic: "test_topic",
+        id: bin,
+        claims: @claims
+      }
     }
 
     state = %{
       replication_mode: "RLS",
       subscription_params: %{
-        self() => [
-          %{
-            channel_pid: self(),
-            params: %{"schema" => "public", "table" => "*"},
-            id: @subscription_id,
-            claims: @claims
-          }
-        ]
+        self() => %{
+          entities: [],
+          filters: [],
+          topic: "test_topic",
+          id: bin,
+          claims: %{"role" => "authenticated"},
+          claims_role: "authenticated"
+        }
       },
       sync_interval: 15_000,
       sync_ref: make_ref()
@@ -111,27 +107,26 @@ defmodule Realtime.SubscriptionManagerTest do
     assert expected == SubscriptionManager.handle_call(mess, self(), state)
   end
 
-  test "handle_call/track_topic_subscribers, updated state" do
-    mess = {
-      :track_topic_subscribers,
-      [
-        %{
-          channel_pid: self(),
-          params: %{"schema" => "*"},
-          id: @subscription_id,
-          claims: @claims
-        }
-      ]
-    }
+  test "handle_call/track_topic_subscriber, updated state" do
+    {_, bin} = Ecto.UUID.dump(@subscription_id)
 
-    prev_sub = [
+    mess = {
+      :track_topic_subscriber,
       %{
-        channel_pid: :some_prev_pid,
-        params: %{"schema" => "public"},
-        id: @subscription_id,
+        channel_pid: self(),
+        topic: "test_topic",
+        id: bin,
         claims: @claims
       }
-    ]
+    }
+
+    prev_sub = %{
+      entities: [16537],
+      filters: [],
+      topic: "public:todos",
+      id: bin,
+      claims: @claims
+    }
 
     state = %{
       replication_mode: "RLS",
@@ -149,14 +144,14 @@ defmodule Realtime.SubscriptionManagerTest do
         assert is_reference(new_state.sync_ref)
         assert sub_param.some_prev_pid == prev_sub
 
-        assert sub_param[self()] == [
-                 %{
-                   channel_pid: self(),
-                   params: %{"schema" => "*"},
-                   id: @subscription_id,
-                   claims: @claims
-                 }
-               ]
+        assert sub_param[self()] == %{
+                 entities: [],
+                 filters: [],
+                 topic: "test_topic",
+                 id: bin,
+                 claims: @claims,
+                 claims_role: "authenticated"
+               }
 
       other ->
         assert match?({:reply, :ok, _}, other)
@@ -194,6 +189,7 @@ defmodule Realtime.SubscriptionManagerTest do
 
   test "handle_info/sync_subscription, when subscription_params is not empty" do
     msg = {:DOWN, make_ref(), :process, self(), :any}
+    {_, bin} = Ecto.UUID.dump(@subscription_id)
 
     state = %{
       subscription_params: %{
@@ -201,7 +197,7 @@ defmodule Realtime.SubscriptionManagerTest do
           entities: [],
           filters: [],
           topic: "public:todos",
-          id: @subscription_id,
+          id: bin,
           claims: @claims
         }
       }
@@ -216,6 +212,7 @@ defmodule Realtime.SubscriptionManagerTest do
     with_mock Realtime.RLS.Subscriptions,
       delete_topic_subscriber: fn _ -> raise "" end do
       msg = {:DOWN, make_ref(), :process, self(), :any}
+      {_, bin} = Ecto.UUID.dump(@subscription_id)
 
       state = %{
         subscription_params: %{
@@ -223,7 +220,7 @@ defmodule Realtime.SubscriptionManagerTest do
             entities: [],
             filters: [],
             topic: "public:todos",
-            id: @subscription_id,
+            id: bin,
             claims: @claims
           }
         }
