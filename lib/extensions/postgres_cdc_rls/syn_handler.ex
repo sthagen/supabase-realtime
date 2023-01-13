@@ -47,12 +47,25 @@ defmodule Extensions.PostgresCdcRls.SynHandler do
       end
 
     if node() == node(stop) do
-      resp = DynamicSupervisor.stop(stop, :shutdown, 4_000)
-      "Resolving #{name} conflict, stop local pid: #{inspect(stop)}, response: #{inspect(resp)}"
+      spawn(fn ->
+        resp =
+          if Process.alive?(stop) do
+            try do
+              DynamicSupervisor.stop(stop, :shutdown, 15_000)
+            catch
+              error, reason -> {:error, {error, reason}}
+            end
+          else
+            :not_alive
+          end
+
+        Logger.warn(
+          "Resolving #{name} conflict, stop local pid: #{inspect(stop)}, response: #{inspect(resp)}"
+        )
+      end)
     else
-      "Resolving #{name} conflict, remote pid: #{inspect(stop)}"
+      Logger.warn("Resolving #{name} conflict, remote pid: #{inspect(stop)}")
     end
-    |> Logger.warn()
 
     keep
   end

@@ -16,8 +16,11 @@ defmodule Realtime.Api.Tenant do
     field(:external_id, :string)
     field(:jwt_secret, :string)
     field(:postgres_cdc_default, :string)
-    field(:max_concurrent_users, :integer)
-    field(:max_events_per_second, :integer)
+    field(:max_concurrent_users, :integer, default: 200)
+    field(:max_events_per_second, :integer, default: 100)
+    field(:max_bytes_per_second, :integer, default: 100_000)
+    field(:max_channels_per_client, :integer, default: 100)
+    field(:max_joins_per_second, :integer, default: 500)
     field(:events_per_second_rolling, :float, virtual: true)
     field(:events_per_second_now, :integer, virtual: true)
 
@@ -63,7 +66,10 @@ defmodule Realtime.Api.Tenant do
       :jwt_secret,
       :max_concurrent_users,
       :max_events_per_second,
-      :postgres_cdc_default
+      :postgres_cdc_default,
+      :max_bytes_per_second,
+      :max_channels_per_client,
+      :max_joins_per_second
     ])
     |> validate_required([
       :external_id,
