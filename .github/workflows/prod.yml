@@ -1,9 +1,8 @@
-name: MT Deploy Production
+name: Deploy Production
 on:
   push:
     branches:
-      - release
-
+      - 'releases/latest'
 jobs:
   release:
     runs-on: ubuntu-20.04
@@ -20,9 +19,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN_PROJECT_ACTION }}
 
   deploy:
-    needs: release
     runs-on: ubuntu-20.04
-    if: needs.release.outputs.published == 'true'
     steps:
       - uses: actions/checkout@v2
       - uses: superfly/flyctl-actions@1.1
@@ -152,3 +149,20 @@ jobs:
           dst: |
             public.ecr.aws/supabase/realtime:v${{ needs.release.outputs.version }}
             ghcr.io/supabase/realtime:v${{ needs.release.outputs.version }}
+
+  update-branch-name:
+    needs: [release, docker_x86_release, docker_arm_release, merge_manifest]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v2
+        with:
+          ref: refs/heads/releases/latest
+      - name: Update branch name
+        run: |
+          git branch -m releases/latest releases/v${{ needs.release.outputs.version }}
+          git push origin HEAD:releases/v${{ needs.release.outputs.version }}
+          git checkout -b main
+          git push origin --delete releases/latest
+          git branch releases/latest main
+          git push origin HEAD:releases/latest
