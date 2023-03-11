@@ -12,8 +12,9 @@ defmodule Extensions.PostgresCdcRls.ReplicationPoller do
 
   alias Extensions.PostgresCdcRls.{Replications, MessageDispatcher}
   alias DBConnection.Backoff
-
   alias Realtime.PubSub
+  alias Realtime.GenCounter
+  alias Realtime.Tenants
 
   alias Realtime.Adapters.Changes.{
     DeletedRecord,

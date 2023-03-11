@@ -9,7 +9,7 @@ defmodule RealtimeWeb.RealtimeChannel do
   alias DBConnection.Backoff
   alias Phoenix.Tracker.Shard
   alias RealtimeWeb.{ChannelsAuthorization, Endpoint, Presence}
-  alias Realtime.{GenCounter, RateCounter, PostgresCdc, SignalHandler}
+  alias Realtime.{GenCounter, RateCounter, PostgresCdc, SignalHandler, Tenants}
 
   import Realtime.Helpers, only: [cancel_timer: 1, decrypt!: 2]
 
@@ -254,7 +254,6 @@ defmodule RealtimeWeb.RealtimeChannel do
 
   @impl true
   def handle_info(%{event: "postgres_cdc_down"}, socket) do
-    socket = count(socket)
     pg_sub_ref = postgres_subscribe()
 
     {:noreply, assign(socket, %{pg_sub_ref: pg_sub_ref})}
@@ -282,7 +281,6 @@ defmodule RealtimeWeb.RealtimeChannel do
           }
         } = socket
       ) do
-    socket = count(socket)
     cancel_timer(pg_sub_ref)
 
     args = Map.put(postgres_extension, "id", tenant)
@@ -317,8 +315,6 @@ defmodule RealtimeWeb.RealtimeChannel do
 
   @impl true
   def handle_info(:confirm_token, %{assigns: %{pg_change_params: pg_change_params}} = socket) do
-    socket = count(socket)
-
     case confirm_token(socket) do
       {:ok, claims, confirm_token_ref} ->
         pg_change_params = Enum.map(pg_change_params, &Map.put(&1, :claims, claims))
@@ -379,7 +375,7 @@ defmodule RealtimeWeb.RealtimeChannel do
         %{assigns: %{pg_sub_ref: pg_sub_ref, pg_change_params: pg_change_params}} = socket
       )
       when is_binary(refresh_token) do
-    socket = count(socket) |> assign(:access_token, refresh_token)
+    socket = socket |> assign(:access_token, refresh_token)
 
     case confirm_token(socket) do
       {:ok, claims, confirm_token_ref} ->
@@ -495,7 +491,7 @@ defmodule RealtimeWeb.RealtimeChannel do
   end
 
   def limit_joins(%{assigns: %{tenant: tenant, limits: limits}}) do
-    id = {:channel, :joins, tenant}
+    id = Tenants.joins_per_second_key(tenant)
     GenCounter.new(id)
 
     RateCounter.new(id,
@@ -524,18 +520,14 @@ defmodule RealtimeWeb.RealtimeChannel do
   end
 
   def limit_channels(%{assigns: %{tenant: tenant, limits: limits}, transport_pid: pid}) do
-    key = limit_channels_key(tenant)
+    key = Tenants.channels_per_client_key(tenant)
 
     if Registry.count_match(Realtime.Registry, key, pid) > limits.max_channels_per_client do
       {:error, :too_many_channels}
     else
-      Registry.register(Realtime.Registry, limit_channels_key(tenant), pid)
+      Registry.register(Realtime.Registry, Tenants.channels_per_client_key(tenant), pid)
       :ok
     end
-  end
-
-  defp limit_channels_key(tenant) do
-    {:channel, :clients_per, tenant}
   end
 
   defp limit_max_users(%{
@@ -551,7 +543,7 @@ defmodule RealtimeWeb.RealtimeChannel do
   end
 
   defp assign_counter(%{assigns: %{tenant: tenant, limits: limits}} = socket) do
-    key = {:channel, :events, tenant}
+    key = Tenants.events_per_second_key(tenant)
 
     GenCounter.new(key)
 

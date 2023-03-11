@@ -58,8 +58,17 @@ defmodule Extensions.PostgresCdcRls.Subscriptions do
               {:ok, %{num_rows: num} = result} when num > 0 ->
                 result
 
-              _ ->
-                rollback(conn, {:subscription_insert_failed, params})
+              {:ok, _} ->
+                rollback(
+                  conn,
+                  "Subscription insert failed with 0 rows. Check that tables are part of publication #{publication} and subscription params are correct: #{inspect(params)}"
+                )
+
+              {:error, exception} ->
+                rollback(
+                  conn,
+                  "Subscription insert failed with error: #{Exception.message(exception)}. Check that tables are part of publication #{publication} and subscription params are correct: #{inspect(params)}"
+                )
             end
 
           {:error, reason} ->
@@ -126,6 +135,10 @@ defmodule Extensions.PostgresCdcRls.Subscriptions do
     case query(conn, sql, [publication]) do
       {:ok, %{columns: ["schemaname", "tablename", "oid"], rows: rows}} ->
         Enum.reduce(rows, %{}, fn [schema, table, oid], acc ->
+          if String.contains?(table, " ") do
+            Logger.error("Publication table name contains spaces: \"#{schema}\".\"#{table}\"")
+          end
+
           Map.put(acc, {schema, table}, [oid])
           |> Map.update({schema}, [oid], &[oid | &1])
           |> Map.update({"*"}, [oid], &[oid | &1])
