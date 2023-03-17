@@ -77,6 +77,8 @@ defmodule RealtimeWeb.RealtimeChannel do
 
     socket = socket |> assign_access_token(params) |> assign_counter()
 
+    start_db_rate_counter(tenant)
+
     with false <- SignalHandler.shutdown_in_progress?(),
          :ok <- limit_joins(socket),
          :ok <- limit_channels(socket),
@@ -143,7 +145,8 @@ defmodule RealtimeWeb.RealtimeChannel do
               end
 
             metadata = [
-              metadata: {:subscriber_fastlane, transport_pid, serializer, ids, topic, is_new_api}
+              metadata:
+                {:subscriber_fastlane, transport_pid, serializer, ids, topic, tenant, is_new_api}
             ]
 
             # Endpoint.subscribe("realtime:postgres:" <> tenant, metadata)
@@ -232,22 +235,7 @@ defmodule RealtimeWeb.RealtimeChannel do
   def handle_info(:sync_presence, %{assigns: %{tenant_topic: topic}} = socket) do
     socket = count(socket)
 
-    presence_list =
-      socket
-      |> presence_list_shard_bypass()
-      |> case do
-        {:ok, [_ | _]} ->
-          Presence.list(topic)
-
-        {:ok, []} ->
-          %{}
-
-        {:error, message} ->
-          Logger.error("Unable to fetch Presence list for topic #{topic}: #{message}")
-          Presence.list(topic)
-      end
-
-    push(socket, "presence_state", presence_list)
+    push(socket, "presence_state", presence_dirty_list(topic))
 
     {:noreply, socket}
   end
@@ -648,16 +636,26 @@ defmodule RealtimeWeb.RealtimeChannel do
     })
   end
 
-  defp presence_list_shard_bypass(%{assigns: %{tenant_topic: topic}} = _socket) do
-    try do
-      [{:pool_size, size}] = :ets.lookup(Presence, :pool_size)
+  def presence_dirty_list(topic) do
+    [{:pool_size, size}] = :ets.lookup(Presence, :pool_size)
 
-      {:ok,
-       Presence
-       |> Shard.name_for_topic(topic, size)
-       |> Shard.dirty_list(topic)}
-    rescue
-      e -> {:error, Exception.message(e)}
-    end
+    Presence
+    |> Shard.name_for_topic(topic, size)
+    |> Shard.dirty_list(topic)
+    |> Phoenix.Presence.group()
+  end
+
+  defp start_db_rate_counter(tenant) do
+    key = Tenants.db_events_per_second_key(tenant)
+    GenCounter.new(key)
+
+    RateCounter.new(key,
+      idle_shutdown: :infinity,
+      telemetry: %{
+        event_name: [:channel, :db_events],
+        measurements: %{},
+        metadata: %{tenant: tenant}
+      }
+    )
   end
 end
