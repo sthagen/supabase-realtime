@@ -11,4 +11,10 @@ if [ "${ENABLE_TAILSCALE-}" = true ]; then
 fi
 
 echo "Starting Realtime"
+
+if [ "${AWS_EXECUTION_ENV:=none}" = "AWS_ECS_FARGATE" ]; then
+    echo "Running migrations"
+    sudo -E -u nobody /app/bin/migrate
+fi
+
 sudo -E -u nobody /app/bin/server
