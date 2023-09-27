@@ -1,4 +1,5 @@
 defmodule RealtimeWeb.BroadcastController do
+  require Logger
   use RealtimeWeb, :controller
   use OpenApiSpex.ControllerSpecs
 
@@ -38,10 +39,14 @@ defmodule RealtimeWeb.BroadcastController do
            BatchBroadcast.changeset(%BatchBroadcast{}, attrs),
          %Ecto.Changeset{changes: %{messages: messages}} <- changeset,
          events_per_second_key <- Tenants.events_per_second_key(tenant) do
-      for %{changes: %{topic: sub_topic, payload: payload}} <- messages do
+      for %{changes: %{topic: sub_topic, payload: payload, event: event}} <- messages do
         tenant_topic = Tenants.tenant_topic(tenant, sub_topic)
+        payload = %{"payload" => Map.merge(payload, %{"event" => event})}
+
         Endpoint.broadcast_from(self(), tenant_topic, "broadcast", payload)
+
         GenCounter.add(events_per_second_key)
+        Logger.info("Broadcasted message to using HTTP API: " <> tenant_topic)
       end
 
       send_resp(conn, :accepted, "")
