@@ -208,9 +208,13 @@ defmodule Extensions.PostgresCdcRls.Subscriptions do
       %{"table" => table} ->
         {:ok, ["public", table, []]}
 
-      _ ->
+      map when is_map_key(map, "user_token") or is_map_key(map, "auth_token") ->
         {:error,
-         "No subscription params provided. Please provide at least a `schema` or `table` to subscribe to."}
+         "No subscription params provided. Please provide at least a `schema` or `table` to subscribe to: <redacted>"}
+
+      error ->
+        {:error,
+         "No subscription params provided. Please provide at least a `schema` or `table` to subscribe to: #{inspect(error)}"}
     end
   end
 
