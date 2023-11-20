@@ -70,4 +70,31 @@ defmodule RealtimeWeb.ChannelsControllerTest do
       assert json_response(conn, 404) == %{"message" => "Not found"}
     end
   end
+
+  describe "create" do
+    test "creates a channel", %{conn: conn} do
+      name = random_string()
+      conn = post(conn, ~p"/api/channels", %{name: name})
+      res = json_response(conn, 201)
+      assert name == res["name"]
+    end
+
+    test "422 if params are invalid", %{conn: conn} do
+      conn = post(conn, ~p"/api/channels", %{})
+      assert json_response(conn, 422) == %{"errors" => %{"name" => ["can't be blank"]}}
+    end
+  end
+
+  describe "delete" do
+    test "deletes a channel", %{conn: conn, tenant: tenant} do
+      channel = channel_fixture(tenant)
+      conn = delete(conn, ~p"/api/channels/#{channel.id}")
+      assert conn.status == 202
+    end
+
+    test "returns not found if id doesn't exist", %{conn: conn} do
+      conn = delete(conn, ~p"/api/channels/0")
+      assert conn.status == 404
+    end
+  end
 end

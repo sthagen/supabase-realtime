@@ -1,7 +1,18 @@
 defmodule Realtime.RepoTest do
   use Realtime.DataCase, async: false
-  alias Realtime.Repo
+
+  import Ecto.Query
+
   alias Realtime.Api.Channel
+  alias Realtime.Repo
+  alias Realtime.Tenants.Connect
+
+  setup do
+    tenant = tenant_fixture()
+    {:ok, conn} = Connect.lookup_or_start_connection(tenant.external_id)
+    truncate_table(conn, "realtime.channels")
+    %{conn: conn, tenant: tenant}
+  end
 
   describe "with_dynamic_repo/2" do
     test "starts a repo with the given config and kills it in the end of the command" do
@@ -114,6 +125,75 @@ defmodule Realtime.RepoTest do
     end
   end
 
+  describe "all/3" do
+    test "fetches multiple entries and loads a given struct", %{conn: conn, tenant: tenant} do
+      channel_1 = channel_fixture(tenant)
+      channel_2 = channel_fixture(tenant)
+
+      assert {:ok, [^channel_1, ^channel_2] = res} = Repo.all(conn, Channel, Channel)
+      assert Enum.all?(res, &(Ecto.get_meta(&1, :state) == :loaded))
+    end
+  end
+
+  describe "one/3" do
+    test "fetches one entry and loads a given struct", %{conn: conn, tenant: tenant} do
+      channel_1 = channel_fixture(tenant)
+      _channel_2 = channel_fixture(tenant)
+      query = from c in Channel, where: c.id == ^channel_1.id
+      assert {:ok, ^channel_1} = Repo.one(conn, query, Channel)
+      assert Ecto.get_meta(channel_1, :state) == :loaded
+    end
+
+    test "raises exception on multiple results", %{conn: conn, tenant: tenant} do
+      _channel_1 = channel_fixture(tenant)
+      _channel_2 = channel_fixture(tenant)
+
+      assert_raise RuntimeError, "expected at most one result but got 2 in result", fn ->
+        Repo.one(conn, Channel, Channel)
+      end
+    end
+
+    test "if not found, returns nil", %{conn: conn} do
+      query = from c in Channel, where: c.name == "potato"
+      assert {:ok, nil} = Repo.one(conn, query, Channel)
+    end
+  end
+
+  describe "insert/3" do
+    test "inserts a new entry with a given changeset and returns struct", %{conn: conn} do
+      changeset = Channel.changeset(%Channel{}, %{name: "foo"})
+      assert {:ok, %Channel{}} = Repo.insert(conn, changeset, Channel)
+    end
+
+    test "returns changeset if changeset is invalid", %{conn: conn} do
+      changeset = Channel.changeset(%Channel{}, %{})
+      res = Repo.insert(conn, changeset, Channel)
+      assert {:error, %Ecto.Changeset{valid?: false}} = res
+    end
+
+    test "returns an error on Postgrex error", %{conn: conn} do
+      changeset = Channel.changeset(%Channel{}, %{name: "foo"})
+      assert {:ok, _} = Repo.insert(conn, changeset, Channel)
+      assert {:error, _} = Repo.insert(conn, changeset, Channel)
+    end
+  end
+
+  describe "del/3" do
+    test "deletes all from query entry", %{conn: conn, tenant: tenant} do
+      Stream.repeatedly(fn -> channel_fixture(tenant) end) |> Enum.take(3)
+      assert {:ok, 3} = Repo.del(conn, Channel)
+    end
+
+    test "raises error on bad queries", %{conn: conn} do
+      # wrong id type
+      query = from c in Channel, where: c.id == "potato"
+
+      assert_raise Ecto.QueryError, fn ->
+        Repo.del(conn, query)
+      end
+    end
+  end
+
   defp db_config() do
     tenant = tenant_fixture()
 
@@ -144,106 +224,5 @@ defmodule Realtime.RepoTest do
       username: user,
       ssl_enforced: ssl_enforced
     ]
-  end
-
-  describe "result_to_single_struct/2" do
-    test "converts Postgrex.Result to struct" do
-      timestamp = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
-
-      result =
-        {:ok,
-         %Postgrex.Result{
-           columns: ["id", "name", "updated_at", "inserted_at"],
-           rows: [[1, "foo", timestamp, timestamp]]
-         }}
-
-      metadata = metadata()
-
-      assert {:ok,
-              %Channel{
-                __meta__: ^metadata,
-                id: 1,
-                name: "foo",
-                updated_at: ^timestamp,
-                inserted_at: ^timestamp
-              }} = Repo.result_to_single_struct(result, Channel)
-    end
-
-    test "no results returns nil" do
-      result =
-        {:ok, %Postgrex.Result{columns: ["id", "name", "updated_at", "inserted_at"], rows: []}}
-
-      assert {:ok, nil} = Repo.result_to_single_struct(result, Channel)
-    end
-
-    test "Postgrex.Result with more than one row will return error" do
-      timestamp = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
-
-      result =
-        {:ok,
-         %Postgrex.Result{
-           columns: ["id", "name", "updated_at", "inserted_at"],
-           rows: [[1, "foo", timestamp, timestamp], [2, "bar", timestamp, timestamp]]
-         }}
-
-      assert_raise RuntimeError, "expected at most one result but got 2 in result", fn ->
-        Repo.result_to_single_struct(result, Channel)
-      end
-    end
-  end
-
-  describe "result_to_structs/2" do
-    test "converts Postgrex.Result to struct" do
-      timestamp = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
-
-      result =
-        {:ok,
-         %Postgrex.Result{
-           columns: ["id", "name", "updated_at", "inserted_at"],
-           rows: [[1, "foo", timestamp, timestamp], [2, "bar", timestamp, timestamp]]
-         }}
-
-      assert {:ok,
-              [
-                %Channel{
-                  id: 1,
-                  name: "foo",
-                  updated_at: ^timestamp,
-                  inserted_at: ^timestamp
-                } = channel_1,
-                %Channel{
-                  id: 2,
-                  name: "bar",
-                  updated_at: ^timestamp,
-                  inserted_at: ^timestamp
-                } = channel_2
-              ]} = Repo.result_to_structs(result, Channel)
-
-      assert :loaded = Ecto.get_meta(channel_1, :state)
-      assert :loaded = Ecto.get_meta(channel_2, :state)
-    end
-  end
-
-  describe "insert_query_from_changeset/1" do
-    test "returns insert query from changeset" do
-      changeset = Channel.changeset(%Channel{}, %{name: "foo"})
-      inserted_at = changeset.changes.inserted_at
-      updated_at = changeset.changes.updated_at
-
-      expected =
-        {"INSERT INTO \"realtime\".\"channels\" (\"updated_at\",\"name\",\"inserted_at\") VALUES ($1,$2,$3) RETURNING *",
-         [updated_at, "foo", inserted_at]}
-
-      assert Repo.insert_query_from_changeset(changeset) == expected
-    end
-  end
-
-  defp metadata do
-    %Ecto.Schema.Metadata{
-      prefix: Channel.__schema__(:prefix),
-      schema: Channel,
-      source: Channel.__schema__(:source),
-      state: :loaded
-    }
   end
 end

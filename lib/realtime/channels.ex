@@ -31,11 +31,8 @@ defmodule Realtime.Channels do
   @spec create_channel(map(), DBConnection.conn()) :: {:ok, Channel.t()} | {:error, any()}
   def create_channel(attrs, conn) do
     channel = Channel.changeset(%Channel{}, attrs)
-    {query, args} = Repo.insert_query_from_changeset(channel)
 
-    conn
-    |> Postgrex.query(query, args)
-    |> Repo.result_to_single_struct(Channel)
+    Repo.insert(conn, channel, Channel)
   end
 
   @doc """
@@ -46,5 +43,15 @@ defmodule Realtime.Channels do
   def get_channel_by_name(name, conn) do
     query = from c in Channel, where: c.name == ^name
     Repo.one(conn, query, Channel)
+  end
+
+  @doc """
+  Deletes a channel by id from the tenant database using a given DBConnection
+  """
+  @spec delete_channel_by_id(binary(), DBConnection.conn()) ::
+          {:ok, pos_integer()} | {:error, any()}
+  def delete_channel_by_id(id, conn) do
+    query = from c in Channel, where: c.id == ^id
+    Repo.del(conn, query)
   end
 end

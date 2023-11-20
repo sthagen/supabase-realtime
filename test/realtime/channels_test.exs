@@ -44,6 +44,13 @@ defmodule Realtime.ChannelsTest do
       name = random_string()
       assert {:ok, %Channel{name: ^name}} = Channels.create_channel(%{name: name}, conn)
     end
+
+    test "no channel name has error changeset", %{conn: conn} do
+      assert {:error, %Ecto.Changeset{valid?: false, errors: errors}} =
+               Channels.create_channel(%{}, conn)
+
+      assert ^errors = [name: {"can't be blank", [validation: :required]}]
+    end
   end
 
   describe "get_channel_by_name/2" do
@@ -55,6 +62,18 @@ defmodule Realtime.ChannelsTest do
 
     test "nil if channel does not exist", %{conn: conn} do
       assert {:ok, nil} == Channels.get_channel_by_name(random_string(), conn)
+    end
+  end
+
+  describe "delete_channel_by_id/2" do
+    test "deletes correct channel", %{conn: conn, tenant: tenant} do
+      [channel | _] = Stream.repeatedly(fn -> channel_fixture(tenant) end) |> Enum.take(10)
+      assert {:ok, 1} = Channels.delete_channel_by_id(channel.id, conn)
+      assert {:ok, nil} = Channels.get_channel_by_id(channel.id, conn)
+    end
+
+    test "nil if channel does not exist", %{conn: conn} do
+      assert {:ok, 0} = Channels.delete_channel_by_id(0, conn)
     end
   end
 end
