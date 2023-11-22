@@ -6,11 +6,21 @@ defmodule Realtime.RepoTest do
   alias Realtime.Api.Channel
   alias Realtime.Repo
   alias Realtime.Tenants.Connect
+  alias Realtime.Tenants.Migrations
+
+  @cdc "postgres_cdc_rls"
 
   setup do
     tenant = tenant_fixture()
     {:ok, conn} = Connect.lookup_or_start_connection(tenant.external_id)
+
+    settings = Realtime.PostgresCdc.filter_settings(@cdc, tenant.extensions)
+    settings = Map.put(settings, "id", tenant.external_id)
+    settings = Map.put(settings, "db_socket_opts", [:inet])
+
+    start_supervised!({Migrations, settings})
     truncate_table(conn, "realtime.channels")
+
     %{conn: conn, tenant: tenant}
   end
 
@@ -153,9 +163,9 @@ defmodule Realtime.RepoTest do
       end
     end
 
-    test "if not found, returns nil", %{conn: conn} do
+    test "if not found, returns not found error", %{conn: conn} do
       query = from c in Channel, where: c.name == "potato"
-      assert {:ok, nil} = Repo.one(conn, query, Channel)
+      assert {:error, :not_found} = Repo.one(conn, query, Channel)
     end
   end
 
@@ -191,6 +201,32 @@ defmodule Realtime.RepoTest do
       assert_raise Ecto.QueryError, fn ->
         Repo.del(conn, query)
       end
+    end
+  end
+
+  describe "update/3" do
+    test "updates a new entry with a given changeset and returns struct", %{
+      conn: conn,
+      tenant: tenant
+    } do
+      channel = channel_fixture(tenant)
+      changeset = Channel.changeset(channel, %{name: "foo"})
+      assert {:ok, %Channel{}} = Repo.update(conn, changeset, Channel)
+    end
+
+    test "returns changeset if changeset is invalid", %{conn: conn, tenant: tenant} do
+      channel = channel_fixture(tenant)
+      changeset = Channel.changeset(channel, %{name: 0})
+      res = Repo.update(conn, changeset, Channel)
+      assert {:error, %Ecto.Changeset{valid?: false}} = res
+    end
+
+    test "returns an error on Postgrex error", %{conn: conn, tenant: tenant} do
+      channel = channel_fixture(tenant)
+      channel_to_update = channel_fixture(tenant)
+
+      changeset = Channel.changeset(channel_to_update, %{name: channel.name})
+      assert {:error, _} = Repo.update(conn, changeset, Channel)
     end
   end
 
