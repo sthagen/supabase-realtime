@@ -269,12 +269,15 @@ defmodule Extensions.PostgresCdcStream.Replication do
         args["db_password"]
       )
 
+    {:ok, addrtype} = H.detect_ip_version(host)
+
     [
       hostname: host,
       database: name,
       username: user,
       password: pass,
-      port: port
+      port: port,
+      socket_opts: [addrtype]
     ]
   end
 end

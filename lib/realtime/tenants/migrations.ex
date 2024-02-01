@@ -125,8 +125,7 @@ defmodule Realtime.Tenants.Migrations do
            "db_port" => db_port,
            "db_name" => db_name,
            "db_user" => db_user,
-           "db_password" => db_password,
-           "db_socket_opts" => db_socket_opts
+           "db_password" => db_password
          } = args
        ) do
     {host, port, name, user, pass} =
@@ -138,6 +137,7 @@ defmodule Realtime.Tenants.Migrations do
         db_password
       )
 
+    {:ok, addrtype} = H.detect_ip_version(host)
     ssl_enforced = H.default_ssl_param(args)
 
     [
@@ -147,10 +147,8 @@ defmodule Realtime.Tenants.Migrations do
       password: pass,
       username: user,
       pool_size: 2,
-      socket_options: db_socket_opts,
-      parameters: [
-        application_name: "realtime_migrations"
-      ],
+      socket_options: [addrtype],
+      parameters: [application_name: "realtime_migrations"],
       backoff_type: :stop
     ]
     |> H.maybe_enforce_ssl_config(ssl_enforced)

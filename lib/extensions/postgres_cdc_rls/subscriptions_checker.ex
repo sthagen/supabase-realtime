@@ -43,7 +43,6 @@ defmodule Extensions.PostgresCdcRls.SubscriptionsChecker do
       "db_name" => name,
       "db_user" => user,
       "db_password" => pass,
-      "db_socket_opts" => socket_opts,
       "subscribers_tid" => subscribers_tid
     } = args
 
@@ -58,7 +57,6 @@ defmodule Extensions.PostgresCdcRls.SubscriptionsChecker do
         name,
         user,
         pass,
-        socket_opts,
         1,
         5_000,
         ssl_enforced,

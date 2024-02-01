@@ -63,7 +63,6 @@ defmodule Extensions.PostgresCdcRls.SubscriptionManager do
       "db_name" => name,
       "db_user" => user,
       "db_password" => pass,
-      "db_socket_opts" => socket_opts,
       "subs_pool_size" => subs_pool_size
     } = args
 
@@ -78,7 +77,6 @@ defmodule Extensions.PostgresCdcRls.SubscriptionManager do
         name,
         user,
         pass,
-        socket_opts,
         1,
         5_000,
         ssl_enforced,
@@ -92,7 +90,6 @@ defmodule Extensions.PostgresCdcRls.SubscriptionManager do
         name,
         user,
         pass,
-        socket_opts,
         subs_pool_size,
         5_000,
         ssl_enforced,
