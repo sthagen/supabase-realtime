@@ -90,7 +90,7 @@ defmodule Realtime.Tenants.Connect do
   def init(%{tenant_id: tenant_id} = state) do
     Logger.metadata(external_id: tenant_id, project: tenant_id)
 
-    with tenant <- Tenants.Cache.get_tenant_by_external_id(tenant_id),
+    with %Tenant{} = tenant <- Tenants.get_tenant_by_external_id(tenant_id),
          res <- Helpers.check_tenant_connection(tenant, @application_name),
          [%{settings: settings} | _] <- tenant.extensions,
          {:ok, _} <- Migrations.run_migrations(settings) do
@@ -154,6 +154,11 @@ defmodule Realtime.Tenants.Connect do
 
   # Ignore unsuspend messages to avoid handle_info unmatched functions
   def handle_info({:unsuspend_tenant, _}, state) do
+    {:noreply, state}
+  end
+
+  # Ignore invalidate_cache messages to avoid handle_info unmatched functions
+  def handle_info({:invalidate_cache, _}, state) do
     {:noreply, state}
   end
 
