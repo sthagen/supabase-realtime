@@ -81,14 +81,18 @@ defmodule Extensions.PostgresCdcStream do
     end
   end
 
+  @doc """
+  Start db poller. Expects an `external_id` as a `tenant`.
+  """
+
   @spec start(map()) :: :ok | {:error, :already_started | :reserved}
-  def start(args) do
-    Logger.debug("Starting postgres stream extension with args: #{inspect(args, pretty: true)}")
+  def start(%{"id" => tenant} = args) when is_binary(tenant) do
+    Logger.debug("Starting #{__MODULE__} extension with args: #{inspect(args, pretty: true)}")
 
     DynamicSupervisor.start_child(
       {:via, PartitionSupervisor, {Stream.DynamicSupervisor, self()}},
       %{
-        id: args["id"],
+        id: tenant,
         start: {Stream.WorkerSupervisor, :start_link, [args]},
         restart: :transient
       }

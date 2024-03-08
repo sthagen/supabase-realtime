@@ -91,19 +91,19 @@ defmodule Extensions.PostgresCdcRls do
   end
 
   @doc """
-  Start db poller.
-
+  Start db poller. Expects an `external_id` as a `tenant`.
   """
+
   @spec start(map()) :: :ok | {:error, :already_started | :reserved}
-  def start(args) do
+  def start(%{"id" => tenant} = args) when is_binary(tenant) do
     args = Map.merge(args, %{"subs_pool_size" => Map.get(args, "subcriber_pool_size", 5)})
 
-    Logger.debug("Starting postgres stream extension with args: #{inspect(args, pretty: true)}")
+    Logger.debug("Starting #{__MODULE__} extension with args: #{inspect(args, pretty: true)}")
 
     DynamicSupervisor.start_child(
       {:via, PartitionSupervisor, {Rls.DynamicSupervisor, self()}},
       %{
-        id: args["id"],
+        id: tenant,
         start: {Rls.WorkerSupervisor, :start_link, [args]},
         restart: :transient
       }
