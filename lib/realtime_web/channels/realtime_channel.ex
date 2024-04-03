@@ -152,13 +152,31 @@ defmodule RealtimeWeb.RealtimeChannel do
   end
 
   @impl true
-  def handle_info(%{event: type, payload: payload} = msg, socket) do
+  def handle_info(
+        %{event: type, payload: payload} = msg,
+        %{assigns: %{policies: policies}} = socket
+      ) do
     socket =
-      socket
-      |> count()
-      |> Logging.maybe_log_handle_info(msg)
+      cond do
+        type == "presence_diff" and
+            match?(%Policies{broadcast: %PresencePolicies{read: false}}, policies) ->
+          Logger.error("Presence tracking message ignored")
+          socket
 
-    push(socket, type, payload)
+        type != "presence_diff" and
+            match?(%Policies{broadcast: %BroadcastPolicies{write: false}}, policies) ->
+          Logger.error("Broadcast message ignored")
+          socket
+
+        true ->
+          socket
+          |> count()
+          |> Logging.maybe_log_handle_info(msg)
+
+          push(socket, type, payload)
+          socket
+      end
+
     {:noreply, socket}
   end
 
@@ -438,12 +456,14 @@ defmodule RealtimeWeb.RealtimeChannel do
     assign(socket, :access_token, tenant_token)
   end
 
-  defp confirm_token(%{assigns: %{jwt_secret: jwt_secret, access_token: access_token} = assigns}) do
+  defp confirm_token(%{assigns: assigns}) do
+    %{jwt_secret: jwt_secret, access_token: access_token} = assigns
+    jwt_jwks = Map.get(assigns, :jwt_jwks)
     secure_key = Application.fetch_env!(:realtime, :db_enc_key)
 
     with jwt_secret_dec <- Helpers.decrypt!(jwt_secret, secure_key),
          {:ok, %{"exp" => exp} = claims} when is_integer(exp) <-
-           ChannelsAuthorization.authorize_conn(access_token, jwt_secret_dec),
+           ChannelsAuthorization.authorize_conn(access_token, jwt_secret_dec, jwt_jwks),
          exp_diff when exp_diff > 0 <- exp - Joken.current_time() do
       if ref = assigns[:confirm_token_ref], do: Helpers.cancel_timer(ref)
 
