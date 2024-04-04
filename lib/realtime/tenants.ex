@@ -4,12 +4,14 @@ defmodule Realtime.Tenants do
   """
 
   require Logger
+  alias Realtime.Tenants.Migrations
   alias Realtime.Api.Tenant
   alias Realtime.Tenants.Connect
   alias Realtime.Repo
   alias Realtime.Repo.Replica
   alias Realtime.Tenants.Cache
   alias Realtime.UsersCounter
+  alias Realtime.Helpers
 
   @doc """
   Gets a list of connected tenant `external_id` strings in the cluster or a node.
@@ -35,10 +37,16 @@ defmodule Realtime.Tenants do
   """
 
   @spec get_health_conn(Tenant.t()) :: {:error, term()} | {:ok, pid()}
-  def get_health_conn(%Tenant{external_id: external_id}) do
+  def get_health_conn(%Tenant{external_id: external_id} = tenant) do
     case Connect.get_status(external_id) do
-      {:ok, conn} -> {:ok, conn}
-      {:error, reason} -> {:error, reason}
+      {:ok, conn} ->
+        [%{settings: settings} | _] = tenant.extensions
+        Helpers.transaction(conn, fn _ -> Migrations.run_migrations(settings) end)
+
+        {:ok, conn}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
