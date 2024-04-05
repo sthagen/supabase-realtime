@@ -55,17 +55,29 @@ defmodule Realtime.Tenants.Authorization do
   Runs validations based on RLS policies to set policies for a given connection (either Phoenix.Socket or Plug.Conn).
   """
   @spec get_authorizations(Phoenix.Socket.t() | Plug.Conn.t(), DBConnection.t(), __MODULE__.t()) ::
-          {:ok, Phoenix.Socket.t() | Plug.Conn.t()} | {:error, :unauthorized}
+          {:ok, Phoenix.Socket.t() | Plug.Conn.t()} | {:error, any()}
   def get_authorizations(%Phoenix.Socket{} = socket, db_conn, authorization_context) do
-    case get_policies_for_connection(db_conn, authorization_context) do
+    case get_authorizations(db_conn, authorization_context) do
       %Policies{} = policies -> {:ok, Phoenix.Socket.assign(socket, :policies, policies)}
       error -> {:error, error}
     end
   end
 
   def get_authorizations(%Plug.Conn{} = conn, db_conn, authorization_context) do
-    case get_policies_for_connection(db_conn, authorization_context) do
+    case get_authorizations(db_conn, authorization_context) do
       %Policies{} = policies -> {:ok, Plug.Conn.assign(conn, :policies, policies)}
+      error -> error
+    end
+  end
+
+  @doc """
+  Runs validations based on RLS policies and returns the policies
+  """
+  @spec get_authorizations(DBConnection.t(), __MODULE__.t()) ::
+          %Policies{} | {:error, any()}
+  def get_authorizations(db_conn, authorization_context) do
+    case get_policies_for_connection(db_conn, authorization_context) do
+      %Policies{} = policies -> policies
       error -> {:error, error}
     end
   end
@@ -92,7 +104,6 @@ defmodule Realtime.Tenants.Authorization do
       role: role
     } = authorization_context
 
-    sub = Map.get(claims, :sub)
     claims = Jason.encode!(claims)
     headers = headers |> Map.new() |> Jason.encode!()
 
@@ -109,13 +120,11 @@ defmodule Realtime.Tenants.Authorization do
       SELECT
        set_config('role', $1, true),
        set_config('realtime.channel_name', $2, true),
-       set_config('request.jwt.claim.role', $3, true),
-       set_config('request.jwt', $4, true),
-       set_config('request.jwt.claim.sub', $5, true),
-       set_config('request.jwt.claims', $6, true),
-       set_config('request.headers', $7, true)
+       set_config('request.jwt', $3, true),
+       set_config('request.jwt.claims', $4, true),
+       set_config('request.headers', $5, true)
       """,
-      [role, channel_name, role, jwt, sub, claims, headers]
+      [role, channel_name, jwt, claims, headers]
     )
   end
 
