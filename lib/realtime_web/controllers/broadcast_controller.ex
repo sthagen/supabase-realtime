@@ -52,35 +52,40 @@ defmodule RealtimeWeb.BroadcastController do
            BatchBroadcast.changeset(%BatchBroadcast{}, attrs),
          %Ecto.Changeset{changes: %{messages: messages}} = changeset,
          events_per_second_key = Tenants.events_per_second_key(tenant),
-         :ok <- check_rate_limit(events_per_second_key, tenant, length(messages)),
-         {:ok, db_conn} <- Connect.lookup_or_start_connection(tenant.external_id) do
+         :ok <- check_rate_limit(events_per_second_key, tenant, length(messages)) do
       events =
         Enum.map(messages, fn %{changes: %{topic: sub_topic} = event} -> {sub_topic, event} end)
 
       channel_names = events |> Enum.map(fn {sub_topic, _} -> sub_topic end) |> MapSet.new()
 
-      if MapSet.size(channel_names) > 1 do
+      if MapSet.size(channel_names) > 1 && tenant.enable_authorization do
         Logger.warning(
           "This Broadcast is sending to multiple channels. Avoid this as it impact your performance."
         )
       end
 
-      query_to_check = from(c in Channel, where: c.name in ^MapSet.to_list(channel_names))
+      rls_channels =
+        if tenant.enable_authorization do
+          {:ok, db_conn} = Connect.lookup_or_start_connection(tenant.external_id)
 
-      channels =
-        Helpers.transaction(db_conn, fn transaction_conn ->
-          transaction_conn
-          |> Repo.all(query_to_check, Channel)
-          |> then(fn {:ok, channels} -> channels end)
-        end)
+          Helpers.transaction(db_conn, fn transaction_conn ->
+            query = from(c in Channel, where: c.name in ^MapSet.to_list(channel_names))
 
-      channels_names_to_check =
-        channels
+            transaction_conn
+            |> Repo.all(query, Channel)
+            |> then(fn {:ok, channels} -> channels end)
+          end)
+        else
+          []
+        end
+
+      rls_channel_names =
+        rls_channels
         |> Enum.map(& &1.name)
         |> MapSet.new()
 
       # Handle events without authorization
-      MapSet.difference(channel_names, channels_names_to_check)
+      MapSet.difference(channel_names, rls_channel_names)
       |> Enum.each(fn channel_name ->
         events
         |> Enum.filter(fn {sub_topic, _} -> sub_topic == channel_name end)
@@ -91,7 +96,7 @@ defmodule RealtimeWeb.BroadcastController do
 
       if(tenant.enable_authorization) do
         # Handle events with authorization
-        channels_names_to_check
+        rls_channel_names
         |> Enum.reduce([], fn sub_topic, acc ->
           Enum.filter(events, fn
             {^sub_topic, _} -> true
@@ -100,8 +105,10 @@ defmodule RealtimeWeb.BroadcastController do
         end)
         |> Enum.map(fn {_, event} -> event end)
         |> Enum.each(fn %{topic: channel_name, payload: payload, event: event} ->
+          {:ok, db_conn} = Connect.lookup_or_start_connection(tenant.external_id)
+
           Helpers.transaction(db_conn, fn transaction_conn ->
-            case permissions_for_channel(conn, transaction_conn, channels, channel_name) do
+            case permissions_for_channel(conn, transaction_conn, rls_channels, channel_name) do
               %Policies{
                 channel: %ChannelPolicies{read: true},
                 broadcast: %BroadcastPolicies{write: true}
