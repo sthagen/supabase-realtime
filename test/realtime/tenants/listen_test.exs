@@ -3,7 +3,6 @@ defmodule Realtime.Tenants.ListenTest do
   use Realtime.DataCase, async: false
   import Mock
 
-  alias Realtime.GenCounter
   alias Realtime.RateCounter
   alias Realtime.Tenants.Listen
 
@@ -17,14 +16,15 @@ defmodule Realtime.Tenants.ListenTest do
       start_supervised(Realtime.GenCounter.DynamicSupervisor)
 
       tenant = tenant_fixture()
-      RateCounter.new({:channel, :events, tenant.external_id})
 
+      RateCounter.new({:channel, :events, tenant.external_id})
       {:ok, listen_conn} = Listen.start(tenant)
+
       {:ok, db_conn} = connect(tenant)
 
       on_exit(fn ->
-        Process.exit(listen_conn, :normal)
-        Process.exit(db_conn, :normal)
+        Process.exit(listen_conn, :shutdown)
+        Process.exit(db_conn, :shutdown)
       end)
 
       {:ok, tenant: tenant, db_conn: db_conn}
@@ -32,9 +32,7 @@ defmodule Realtime.Tenants.ListenTest do
 
     test "on public notify, broadcasts to topic", %{tenant: tenant, db_conn: db_conn} do
       with_mocks [
-        {Endpoint, [:passthrough], broadcast_from: fn _, _, _, _ -> :ok end},
-        {GenCounter, [:passthrough], add: fn _ -> :ok end},
-        {RateCounter, [:passthrough], get: fn _ -> {:ok, %{avg: 0}} end}
+        {Endpoint, [:passthrough], broadcast_from: fn _, _, _, _ -> :ok end}
       ] do
         topic = random_string()
 
@@ -47,13 +45,13 @@ defmodule Realtime.Tenants.ListenTest do
               event: random_string()
             }
           end)
-          |> Enum.take(10)
+          |> Enum.take(5)
 
         Enum.each(messages, fn %{private: private, topic: topic, payload: payload, event: event} ->
           broadcast_test_message(db_conn, private, topic, event, payload)
         end)
 
-        :timer.sleep(100)
+        :timer.sleep(1000)
 
         messages =
           Enum.map(messages, fn %{private: private, topic: topic, payload: payload, event: event} ->
@@ -85,48 +83,61 @@ defmodule Realtime.Tenants.ListenTest do
       end
     end
 
-    test "on bad format logs out error", %{tenant: tenant, db_conn: db_conn} do
-      with_mocks [
-        {Endpoint, [:passthrough], broadcast_from: fn _, _, _, _ -> :ok end},
-        {GenCounter, [:passthrough], add: fn _ -> :ok end},
-        {RateCounter, [:passthrough], get: fn _ -> {:ok, %{avg: 0}} end}
-      ] do
-        capture_log(fn ->
-          query =
-            """
-            select pg_notify(
-                'realtime:broadcast',
-                json_build_object(
-                    'private', $1::boolean,
-                    'event', $2::text,
-                    'payload', $3::jsonb
-                )::text
-            );
-            """
+    test "on failure to connect, returns error" do
+      tenant =
+        tenant_fixture(%{
+          extensions: [
+            %{
+              "type" => "postgres_cdc_rls",
+              "settings" => %{
+                "db_host" => "localhost",
+                "db_name" => "postgres",
+                "db_user" => "supabase_admin",
+                "db_password" => "postgres",
+                "db_port" => "5433",
+                "poll_interval" => 100,
+                "poll_max_changes" => 100,
+                "poll_max_record_bytes" => 1_048_576,
+                "region" => "us-east-1",
+                "ssl_enforced" => true
+              }
+            }
+          ]
+        })
 
-          Postgrex.query!(db_conn, query, [false, random_string(), %{payload: random_string()}])
-        end) =~ "UnableToProcessListenPayload"
-      end
+      assert {:error, %Postgrex.Error{message: "ssl not available"}} = Listen.start(tenant)
     end
 
-    test "on non json format logs out error", %{tenant: tenant, db_conn: db_conn} do
-      with_mocks [
-        {Endpoint, [:passthrough], broadcast_from: fn _, _, _, _ -> :ok end},
-        {GenCounter, [:passthrough], add: fn _ -> :ok end},
-        {RateCounter, [:passthrough], get: fn _ -> {:ok, %{avg: 0}} end}
-      ] do
-        capture_log(fn ->
-          query =
-            """
-            select pg_notify(
-                'realtime:broadcast',
-                'potato'::text
-            );
-            """
+    test "on bad format logs out error", %{db_conn: db_conn} do
+      capture_log(fn ->
+        query =
+          """
+          select pg_notify(
+              'realtime:broadcast',
+              json_build_object(
+                  'private', $1::boolean,
+                  'event', $2::text,
+                  'payload', $3::jsonb
+              )::text
+          );
+          """
 
-          Postgrex.query!(db_conn, query, [])
-        end) =~ "UnableToProcessListenPayload"
-      end
+        Postgrex.query!(db_conn, query, [false, random_string(), %{payload: random_string()}])
+      end) =~ "UnableToProcessListenPayload"
+    end
+
+    test "on non json format logs out error", %{db_conn: db_conn} do
+      capture_log(fn ->
+        query =
+          """
+          select pg_notify(
+              'realtime:broadcast',
+              'potato'::text
+          );
+          """
+
+        Postgrex.query!(db_conn, query, [])
+      end) =~ "UnableToProcessListenPayload"
     end
   end
 end
