@@ -3,6 +3,7 @@ defmodule Realtime.Rpc do
   RPC module for Realtime with the intent of standardizing the RPC interface and collect telemetry
   """
   alias Realtime.Telemetry
+  import Realtime.Helpers, only: [log_error: 2]
 
   @doc """
   Calls external node using :rpc.call/5 and collects telemetry
@@ -31,22 +32,37 @@ defmodule Realtime.Rpc do
   @doc """
   Calls external node using :erpc.call/5 and collects telemetry
   """
-  @spec enhanced_call(atom(), atom(), atom(), any(), keyword()) :: any()
+  @spec enhanced_call(atom(), atom(), atom(), any(), keyword()) :: {:ok, any()} | {:error, any()}
   def enhanced_call(node, mod, func, args \\ [], opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 15_000)
-    {latency, response} = :timer.tc(fn -> :erpc.call(node, mod, func, args, timeout) end)
 
-    Telemetry.execute(
-      [:realtime, :rpc],
-      %{latency: latency},
-      %{
-        mod: mod,
-        func: func,
-        target_node: node,
-        origin_node: node()
-      }
-    )
+    try do
+      :timer.tc(fn -> :erpc.call(node, mod, func, args, timeout) end)
+    catch
+      kind, reason ->
+        log_error("ErrorOnRpcCall", {kind, reason})
+        {:error, "RPC call error"}
+    else
+      {_, {:EXIT, _}} = badrpc ->
+        log_error("ErrorOnRpcCall", badrpc)
+        {:error, "RPC call error"}
 
-    response
+      {latency, response} ->
+        Telemetry.execute(
+          [:realtime, :rpc],
+          %{latency: latency},
+          %{
+            mod: mod,
+            func: func,
+            target_node: node,
+            origin_node: node()
+          }
+        )
+
+        case response do
+          {status, _} when status in [:ok, :error] -> response
+          _ -> {:error, response}
+        end
+    end
   end
 end
