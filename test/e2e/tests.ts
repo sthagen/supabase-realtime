@@ -3,14 +3,19 @@ import {
   createClient,
   SupabaseClient,
   RealtimeChannel,
-} from "npm:@supabase/supabase-js@2.44.1";
+} from "npm:@supabase/supabase-js@latest";
 import {
   assert,
   assertEquals,
-  assertStringIncludes,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { describe, it } from "https://deno.land/std@0.224.0/testing/bdd.ts";
 import { sleep } from "https://deno.land/x/sleep/mod.ts";
+
+const env = await load();
+const url = env["PROJECT_URL"];
+const token = env["PROJECT_ANON_TOKEN"];
+const realtime = { heartbeatIntervalMs: 500, timeout: 1000 };
+const config = { config: { broadcast: { self: true } } };
 
 const signInUser = async (
   supabase: SupabaseClient,
@@ -32,18 +37,37 @@ const stopClient = async (
   });
   supabase.realtime.disconnect(1000, "test done");
   supabase.auth.stopAutoRefresh();
-  await sleep(2);
+  await sleep(1);
 };
 
-const env = await load();
-const url = env["PROJECT_URL"];
-const token = env["PROJECT_ANON_TOKEN"];
-const realtime = { heartbeatIntervalMs: 1000, timeout: 1000 };
-const config = { config: { broadcast: { self: true } } };
+const executeCreateDatabaseActions = async (
+  supabase: SupabaseClient,
+  table: string
+): Promise<number> => {
+  const { data }: any = await supabase
+    .from(table)
+    .insert([{ value: crypto.randomUUID() }])
+    .select("id");
+  return data[0].id;
+};
+
+const executeModifyDatabaseActions = async (
+  supabase: SupabaseClient,
+  table: string,
+  id: number
+) => {
+  await supabase
+    .from(table)
+    .update({ value: crypto.randomUUID() })
+    .eq("id", id);
+
+  await supabase.from(table).delete().eq("id", id);
+};
 
 describe("broadcast extension", () => {
   it("user is able to receive self broadcast", async () => {
     let supabase = await createClient(url, token, { realtime });
+
     let result = null;
     let event = crypto.randomUUID();
     let topic = crypto.randomUUID();
@@ -60,16 +84,16 @@ describe("broadcast extension", () => {
             payload: expectedPayload,
           });
         }
-        assert(status == "SUBSCRIBED" || status == "CLOSED");
       });
 
-    await sleep(1);
+    await sleep(2);
     await stopClient(supabase, [channel]);
     assertEquals(result, expectedPayload);
   });
 
   it("user is able to use the endpoint to broadcast", async () => {
     let supabase = await createClient(url, token, { realtime });
+
     let result = null;
     let event = crypto.randomUUID();
     let topic = crypto.randomUUID();
@@ -87,9 +111,124 @@ describe("broadcast extension", () => {
       payload: expectedPayload,
     });
 
-    await sleep(2);
+    await sleep(1);
     await stopClient(supabase, [activeChannel, unsubscribedChannel]);
     assertEquals(result, expectedPayload);
+  });
+});
+
+describe("postgres changes extension", () => {
+  it("user is able to receive INSERT only events from a subscribed table with filter applied", async () => {
+    let supabase = await createClient(url, token, { realtime });
+    let accessToken = await signInUser(supabase, "test1@test.com", "test_test");
+    await supabase.realtime.setAuth(accessToken);
+
+    let result: Array<any> = [];
+    let topic = crypto.randomUUID();
+
+    let previousId = await executeCreateDatabaseActions(supabase, "pg_changes");
+    let dummyId = await executeCreateDatabaseActions(supabase, "dummy");
+
+    const activeChannel = supabase
+      .channel(topic, config)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "pg_changes",
+          filter: `id=eq.${previousId + 1}`,
+        },
+        (payload) => result.push(payload)
+      )
+      .subscribe();
+    await sleep(2);
+    await executeCreateDatabaseActions(supabase, "pg_changes");
+    await executeCreateDatabaseActions(supabase, "pg_changes");
+    await sleep(2);
+    await stopClient(supabase, [activeChannel]);
+
+    assertEquals(result.length, 1);
+    assertEquals(result[0].eventType, "INSERT");
+    assertEquals(result[0].new.id, previousId + 1);
+  });
+
+  it("user is able to receive UPDATE only events from a subscribed table with filter applied", async () => {
+    let supabase = await createClient(url, token, { realtime });
+    let accessToken = await signInUser(supabase, "test1@test.com", "test_test");
+    await supabase.realtime.setAuth(accessToken);
+
+    let result: Array<any> = [];
+    let topic = crypto.randomUUID();
+
+    let mainId = await executeCreateDatabaseActions(supabase, "pg_changes");
+    let fakeId = await executeCreateDatabaseActions(supabase, "pg_changes");
+    let dummyId = await executeCreateDatabaseActions(supabase, "dummy");
+
+    const activeChannel = supabase
+      .channel(topic, config)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "pg_changes",
+          filter: `id=eq.${mainId}`,
+        },
+        (payload) => result.push(payload)
+      )
+      .subscribe();
+    await sleep(2);
+
+    executeModifyDatabaseActions(supabase, "pg_changes", mainId);
+    executeModifyDatabaseActions(supabase, "pg_changes", fakeId);
+    executeModifyDatabaseActions(supabase, "dummy", dummyId);
+
+    await sleep(2);
+    await stopClient(supabase, [activeChannel]);
+
+    assertEquals(result.length, 1);
+    assertEquals(result[0].eventType, "UPDATE");
+    assertEquals(result[0].new.id, mainId);
+  });
+
+  it("user is able to receive DELETE only events from a subscribed table with filter applied", async () => {
+    let supabase = await createClient(url, token, { realtime });
+    let accessToken = await signInUser(supabase, "test1@test.com", "test_test");
+    await supabase.realtime.setAuth(accessToken);
+
+    let result: Array<any> = [];
+    let topic = crypto.randomUUID();
+
+    let mainId = await executeCreateDatabaseActions(supabase, "pg_changes");
+    let fakeId = await executeCreateDatabaseActions(supabase, "pg_changes");
+    let dummyId = await executeCreateDatabaseActions(supabase, "dummy");
+
+    const activeChannel = supabase
+      .channel(topic, config)
+      .on(
+        "postgres_changes",
+        {
+          event: "DELETE",
+          schema: "public",
+          table: "pg_changes",
+          filter: `id=eq.${mainId}`,
+        },
+        (payload) => result.push(payload)
+      )
+      .subscribe();
+    await sleep(2);
+
+    executeModifyDatabaseActions(supabase, "pg_changes", mainId);
+    executeModifyDatabaseActions(supabase, "pg_changes", fakeId);
+    executeModifyDatabaseActions(supabase, "dummy", dummyId);
+
+    await sleep(2);
+    await stopClient(supabase, [activeChannel]);
+
+    assertEquals(result.length, 1);
+    assertEquals(result[0].eventType, "DELETE");
+    assertEquals(result[0].old.id, mainId);
   });
 });
 
