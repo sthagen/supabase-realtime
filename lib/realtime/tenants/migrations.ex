@@ -6,7 +6,7 @@ defmodule Realtime.Tenants.Migrations do
 
   require Logger
 
-  import Realtime.Helpers, only: [log_error: 2]
+  import Realtime.Logs
 
   alias Realtime.Crypto
   alias Realtime.Database
@@ -123,8 +123,6 @@ defmodule Realtime.Tenants.Migrations do
     {20_241_108_114_728, MessagesUsingUuid}
   ]
 
-  @expected_migration_count length(@migrations)
-
   defstruct [:tenant_external_id, :settings]
   @spec run_migrations(map()) :: :ok | {:error, any()}
   def run_migrations(%__MODULE__{tenant_external_id: tenant_external_id} = attrs) do
@@ -197,26 +195,47 @@ defmodule Realtime.Tenants.Migrations do
     end)
   end
 
+  # @expected_migration_count length(@migrations)
+
   @doc """
   Checks if the number of migrations ran in the database is equal to the expected number of migrations.
 
   If not all migrations have been run, it will run the missing migrations.
   """
   @spec maybe_run_migrations(pid(), Tenant.t()) :: :ok
-  def maybe_run_migrations(db_conn, tenant) do
-    query =
-      "select * from pg_catalog.pg_tables where schemaname = 'realtime' and tablename = 'schema_migrations';"
+  def maybe_run_migrations(_db_conn, tenant) do
+    # Logger.metadata(external_id: tenant.external_id, project: tenant.external_id)
 
+    # check_migrations_exist_query =
+    #   "select * from information_schema.tables where table_schema = 'realtime' and table_name = 'schema_migrations'"
+
+    # check_number_migrations_query = "select count(version) from realtime.schema_migrations"
+
+    # with {:ok, %Postgrex.Result{num_rows: 1}} <-
+    #        Database.transaction(db_conn, fn db_conn ->
+    #          Postgrex.query!(db_conn, check_migrations_exist_query, [])
+    #        end),
+    #      {:ok, %Postgrex.Result{rows: [[count]]}} <-
+    #        Database.transaction(db_conn, fn db_conn ->
+    #          Postgrex.query!(db_conn, check_number_migrations_query, [])
+    #        end) do
+    #   if count < @expected_migration_count do
+    #     Logger.error("Running missing migrations")
+    #     run_migrations(%__MODULE__{tenant_external_id: tenant.external_id, settings: settings})
+    #   end
+
+    #   :ok
+    # else
+    #   {:ok, %{num_rows: 0}} ->
+    #     Logger.error("Running migrations")
+    #     run_migrations(%__MODULE__{tenant_external_id: tenant.external_id, settings: settings})
+
+    #   {:error, error} ->
+    #     log_error("MigrationCheckFailed", error)
+    #     {:error, :migration_check_failed}
+    # end
     %{extensions: [%{settings: settings} | _]} = tenant
-
-    {:ok, %{num_rows: num_rows}} =
-      Database.transaction(db_conn, fn db_conn -> Postgrex.query!(db_conn, query, []) end)
-
-    if num_rows < @expected_migration_count do
-      run_migrations(%__MODULE__{tenant_external_id: tenant.external_id, settings: settings})
-    end
-
-    :ok
+    run_migrations(%__MODULE__{tenant_external_id: tenant.external_id, settings: settings})
   end
 
   @doc """
@@ -224,6 +243,7 @@ defmodule Realtime.Tenants.Migrations do
   """
   @spec create_partitions(pid()) :: :ok
   def create_partitions(db_conn_pid) do
+    Logger.info("Creating partitions for realtime.messages")
     today = Date.utc_today()
     yesterday = Date.add(today, -1)
     tomorrow = Date.add(today, 1)
@@ -236,15 +256,17 @@ defmodule Realtime.Tenants.Migrations do
       end_timestamp = Date.to_string(Date.add(date, 1))
 
       Database.transaction(db_conn_pid, fn conn ->
-        Postgrex.query(
-          conn,
-          """
-          CREATE TABLE IF NOT EXISTS realtime.#{partition_name}
-          PARTITION OF realtime.messages
-          FOR VALUES FROM ('#{start_timestamp}') TO ('#{end_timestamp}');
-          """,
-          []
-        )
+        query = """
+        CREATE TABLE IF NOT EXISTS realtime.#{partition_name}
+        PARTITION OF realtime.messages
+        FOR VALUES FROM ('#{start_timestamp}') TO ('#{end_timestamp}');
+        """
+
+        case Postgrex.query(conn, query, []) do
+          {:ok, _} -> Logger.info("Partition #{partition_name} created")
+          {:error, %Postgrex.Error{postgres: %{code: :duplicate_table}}} -> :ok
+          {:error, error} -> log_error("PartitionCreationFailed", error)
+        end
       end)
     end)
 
