@@ -43,10 +43,9 @@ defmodule Realtime.Database do
         settings,
         application_name,
         backoff \\ :rand_exp,
-        decrypt \\ false,
-        pool \\ nil
+        decrypt \\ false
       ) do
-    pool = pool_size_by_application_name(application_name, settings, pool)
+    pool = pool_size_by_application_name(application_name, settings)
 
     settings =
       if decrypt do
@@ -76,39 +75,61 @@ defmodule Realtime.Database do
   @doc """
   Returns the pool size for a given application name. Override pool size if provided.
 
+  `realtime_rls` and `realtime_broadcast_changes` will be handled as a special scenario as it will need to be hardcoded as 1 otherwise replication slots will be tried to be reused leading to errors
+  `realtime_migrations` will be handled as a special scenario as it requires 2 connections.
   ## Examples
 
-      iex> Realtime.Database.pool_size_by_application_name("realtime_rls", %{}, 1)
-      1
+    iex> Realtime.Database.pool_size_by_application_name("realtime_connect", %{})
+    1
 
-      iex> Realtime.Database.pool_size_by_application_name("realtime_rls", %{"db_pool" => 10}, 1)
-      1
+    iex> Realtime.Database.pool_size_by_application_name("realtime_connect", %{"db_pool" => 10})
+    10
 
-      iex> Realtime.Database.pool_size_by_application_name("realtime_rls", %{"db_pool" => 10}, nil)
-      10
+    iex> Realtime.Database.pool_size_by_application_name("realtime_potato", %{})
+    1
 
-      iex> Realtime.Database.pool_size_by_application_name("realtime_potato", %{}, nil)
-      1
+    iex> Realtime.Database.pool_size_by_application_name("realtime_rls", %{"db_pool" => 10})
+    1
 
+    iex> Realtime.Database.pool_size_by_application_name("realtime_rls", %{"subs_pool_size" => 10})
+    1
+
+    iex> Realtime.Database.pool_size_by_application_name("realtime_rls", %{"subcriber_pool_size" => 10})
+    1
+
+    iex> Realtime.Database.pool_size_by_application_name("realtime_broadcast_changes", %{"db_pool" => 10})
+    1
+
+    iex> Realtime.Database.pool_size_by_application_name("realtime_broadcast_changes", %{"subs_pool_size" => 10})
+    1
+
+    iex> Realtime.Database.pool_size_by_application_name("realtime_broadcast_changes", %{"subcriber_pool_size" => 10})
+    1
+
+    iex> Realtime.Database.pool_size_by_application_name("realtime_migrations", %{"db_pool" => 10})
+    2
+
+    iex> Realtime.Database.pool_size_by_application_name("realtime_migrations", %{"subs_pool_size" => 10})
+    2
+
+    iex> Realtime.Database.pool_size_by_application_name("realtime_migrations", %{"subcriber_pool_size" => 10})
+    2
   """
-  @spec pool_size_by_application_name(binary(), map(), non_neg_integer() | nil) ::
-          non_neg_integer()
-  def pool_size_by_application_name(application_name, settings, override_pool \\ nil) do
-    pool =
-      case application_name do
-        "realtime_subscription_manager" -> settings["subcriber_pool_size"]
-        "realtime_subscription_manager_pub" -> settings["subs_pool_size"]
-        "realtime_subscription_checker" -> settings["subs_pool_size"]
-        "realtime_rls" -> settings["db_pool"]
-        "realtime_connect" -> settings["db_pool"]
-        "realtime_health_check" -> 1
-        "realtime_broadcast_changes" -> 1
-        "realtime_migrations" -> 2
-        "realtime_janitor" -> 1
-        _ -> 1
-      end
-
-    if override_pool, do: override_pool, else: pool
+  @spec pool_size_by_application_name(binary(), map() | nil) :: non_neg_integer()
+  def pool_size_by_application_name(application_name, settings) do
+    case application_name do
+      "realtime_subscription_manager" -> settings["subcriber_pool_size"] || 1
+      "realtime_subscription_manager_pub" -> settings["subs_pool_size"] || 1
+      "realtime_subscription_checker" -> settings["subs_pool_size"] || 1
+      "realtime_connect" -> settings["db_pool"] || 1
+      "realtime_health_check" -> 1
+      "realtime_janitor" -> 1
+      "realtime_migrations" -> 2
+      "realtime_broadcast_changes" -> 1
+      "realtime_rls" -> 1
+      "realtime_replication_slot_teardown" -> 1
+      _ -> 1
+    end
   end
 
   @spec from_tenant(
@@ -187,10 +208,10 @@ defmodule Realtime.Database do
     end)
   end
 
-  def connect(tenant, application_name, pool, backoff \\ :stop) do
+  def connect(tenant, application_name, backoff \\ :stop) do
     tenant
     |> then(&Realtime.PostgresCdc.filter_settings(@cdc, &1.extensions))
-    |> then(&Realtime.Database.from_settings(&1, application_name, backoff, false, pool))
+    |> then(&Realtime.Database.from_settings(&1, application_name, backoff, false))
     |> connect_db()
   end
 
@@ -253,7 +274,7 @@ defmodule Realtime.Database do
   """
   @spec replication_slot_teardown(Tenant.t()) :: :ok
   def replication_slot_teardown(tenant) do
-    {:ok, conn} = connect(tenant, "realtime_replication_slot_teardown", 1)
+    {:ok, conn} = connect(tenant, "realtime_replication_slot_teardown")
 
     query =
       "select active_pid from pg_replication_slots where slot_name ilike '%realtime%'"
