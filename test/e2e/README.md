@@ -34,11 +34,19 @@ CREATE TABLE public.broadcast_changes (
     value text NOT NULL
 );
 
+CREATE TABLE public.wallet (
+    id text PRIMARY KEY,
+    wallet_id text NOT NULL
+);
+INSERT INTO public.wallet (id, wallet_id) VALUES (1, 'wallet_1');
+
 ALTER TABLE public.pg_changes ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE public.authorization ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE public.broadcast_changes ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.wallet ENABLE ROW LEVEL SECURITY;
 
 ALTER PUBLICATION supabase_realtime
     ADD TABLE public.pg_changes;
@@ -46,13 +54,21 @@ ALTER PUBLICATION supabase_realtime
 ALTER PUBLICATION supabase_realtime
     ADD TABLE public.dummy;
 
-CREATE POLICY "authenticated have full access to read" ON "realtime"."messages" AS PERMISSIVE
+CREATE POLICY "authenticated receive on topic" ON "realtime"."messages" AS PERMISSIVE
     FOR SELECT TO authenticated
-        USING (TRUE);
+        USING ( realtime.topic() like 'topic:%');
 
-CREATE POLICY "authenticated have full access to write" ON "realtime"."messages" AS PERMISSIVE
+CREATE POLICY "authenticated broadcast on topic" ON "realtime"."messages" AS PERMISSIVE
     FOR INSERT TO authenticated
-        WITH CHECK (TRUE);
+        WITH CHECK ( realtime.topic() like 'topic:%');
+
+CREATE POLICY "authenticated jwt topic in wallet can receive" ON "realtime"."messages" AS PERMISSIVE
+    FOR SELECT TO authenticated
+        USING ( realtime.topic() like 'jwt_topic:%' AND exists (select wallet_id from public.wallet where wallet_id = (auth.jwt() -> 'sub')::text));
+
+CREATE POLICY "authenticated jwt topic in wallet can broadcast" ON "realtime"."messages" AS PERMISSIVE
+    FOR INSERT TO authenticated
+        WITH CHECK ( realtime.topic() like 'jwt_topic:%' AND exists (select wallet_id from public.wallet where wallet_id = (auth.jwt() -> 'sub')::text));
 
 CREATE POLICY "allow authenticated users all access" ON "public"."pg_changes" AS PERMISSIVE
     FOR ALL TO authenticated
@@ -62,14 +78,13 @@ CREATE POLICY "authenticated have full access to read on broadcast_changes" ON "
     FOR ALL TO authenticated
         USING (TRUE);
 
-
 CREATE OR REPLACE FUNCTION broadcast_changes_for_table_trigger ()
     RETURNS TRIGGER
     AS $$
 DECLARE
     topic text;
 BEGIN
-    topic = 'test';
+    topic = 'topic:test';
     PERFORM
         realtime.broadcast_changes (topic, TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, NEW, OLD, TG_LEVEL);
     RETURN NULL;
