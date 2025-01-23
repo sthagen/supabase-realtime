@@ -103,6 +103,12 @@ defmodule RealtimeWeb.RealtimeChannel do
 
       {:ok, state, assign(socket, assigns)}
     else
+      {:error, :unauthorized, msg} ->
+        Logging.log_error_message(:error, "Unauthorized", msg)
+
+      {:error, :expired_token, msg} ->
+        Logging.log_error_message(:error, "InvalidJWTToken", msg)
+
       {:error, [message: "Invalid token", claim: claim, claim_val: value]} ->
         msg = "Invalid value for JWT claim #{inspect(claim)} with value #{inspect(value)}"
         Logging.log_error_message(:error, "InvalidJWTToken", msg)
@@ -176,9 +182,6 @@ defmodule RealtimeWeb.RealtimeChannel do
           "UnableToSetPolicies",
           "Unable to set policies for connection"
         )
-
-      {:error, :unauthorized, msg} ->
-        Logging.log_error_message(:error, "Unauthorized", msg)
 
       {:error, error} ->
         Logging.log_error_message(:error, "UnknownErrorOnChannel", error)
@@ -404,11 +407,10 @@ defmodule RealtimeWeb.RealtimeChannel do
       {:error, :unauthorized, msg} ->
         shutdown_response(socket, msg)
 
-      {:error, {:error, :expired_token, msg}} ->
+      {:error, :expired_token, msg} ->
         shutdown_response(socket, msg)
 
       {:error, error} ->
-        IO.inspect(error)
         msg = "Received an invalid access token from client: " <> inspect(error)
 
         shutdown_response(socket, msg)
@@ -570,7 +572,8 @@ defmodule RealtimeWeb.RealtimeChannel do
 
       {:ok, claims, ref, access_token, socket}
     else
-      {:error, e} -> {:error, e}
+      {:error, error} -> {:error, error}
+      {:error, error, message} -> {:error, error, message}
       e -> {:error, e}
     end
   end
