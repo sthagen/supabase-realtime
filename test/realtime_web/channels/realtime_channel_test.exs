@@ -6,9 +6,10 @@ defmodule RealtimeWeb.RealtimeChannelTest do
   import ExUnit.CaptureLog
 
   alias Phoenix.Socket
+  alias Realtime.Tenants.Authorization
   alias RealtimeWeb.ChannelsAuthorization
-  alias RealtimeWeb.UserSocket
   alias RealtimeWeb.Joken.CurrentTime
+  alias RealtimeWeb.UserSocket
 
   @tenant_external_id "dev_tenant"
 
@@ -31,7 +32,7 @@ defmodule RealtimeWeb.RealtimeChannelTest do
         authorize_conn: fn _, _, _ ->
           {:ok, %{"exp" => Joken.current_time() + 1_000, "role" => "postgres"}}
         end do
-        {:ok, %Socket{} = socket} = connect(UserSocket, %{}, conn_opts())
+        {:ok, %Socket{} = socket} = connect(UserSocket, %{"log_level" => "warning"}, conn_opts())
 
         socket = Socket.assign(socket, %{limits: %{@default_limits | max_concurrent_users: 1}})
         assert {:ok, _, %Socket{}} = subscribe_and_join(socket, "realtime:test", %{})
@@ -43,7 +44,7 @@ defmodule RealtimeWeb.RealtimeChannelTest do
         authorize_conn: fn _, _, _ ->
           {:ok, %{"exp" => Joken.current_time() + 1_000, "role" => "postgres"}}
         end do
-        {:ok, %Socket{} = socket} = connect(UserSocket, %{}, conn_opts())
+        {:ok, %Socket{} = socket} = connect(UserSocket, %{"log_level" => "warning"}, conn_opts())
 
         socket_at_capacity =
           Socket.assign(socket, %{limits: %{@default_limits | max_concurrent_users: 0}})
@@ -66,7 +67,7 @@ defmodule RealtimeWeb.RealtimeChannelTest do
         authorize_conn: fn _, _, _ ->
           {:ok, %{"exp" => Joken.current_time() + 1, "role" => "postgres"}}
         end do
-        {:ok, %Socket{} = socket} = connect(UserSocket, %{}, conn_opts())
+        {:ok, %Socket{} = socket} = connect(UserSocket, %{"log_level" => "warning"}, conn_opts())
 
         assert {:ok, _, %Socket{}} = subscribe_and_join(socket, "realtime:test", %{})
       end
@@ -77,11 +78,13 @@ defmodule RealtimeWeb.RealtimeChannelTest do
         authorize_conn: fn _, _, _ ->
           {:ok, %{"exp" => Joken.current_time(), "role" => "postgres"}}
         end do
-        {:ok, %Socket{} = socket} = connect(UserSocket, %{}, conn_opts())
+        {:ok, %Socket{} = socket} = connect(UserSocket, %{"log_level" => "warning"}, conn_opts())
 
         assert capture_log(fn ->
                  assert {:error, %{reason: "Token expiration time is invalid"}} =
                           subscribe_and_join(socket, "realtime:test", %{})
+
+                 Process.sleep(300)
                end) =~ "InvalidJWTExpiration: Token expiration time is invalid"
       end
 
@@ -89,11 +92,13 @@ defmodule RealtimeWeb.RealtimeChannelTest do
         authorize_conn: fn _, _, _ ->
           {:ok, %{"exp" => Joken.current_time() - 1, "role" => "postgres"}}
         end do
-        {:ok, %Socket{} = socket} = connect(UserSocket, %{}, conn_opts())
+        {:ok, %Socket{} = socket} = connect(UserSocket, %{"log_level" => "warning"}, conn_opts())
 
         assert capture_log(fn ->
                  assert {:error, %{reason: "Token expiration time is invalid"}} =
                           subscribe_and_join(socket, "realtime:test", %{})
+
+                 Process.sleep(300)
                end) =~ "InvalidJWTExpiration: Token expiration time is invalid"
       end
     end
@@ -105,6 +110,8 @@ defmodule RealtimeWeb.RealtimeChannelTest do
           capture_log(fn ->
             assert {:error, :missing_claims} =
                      connect(UserSocket, %{"log_level" => "warning"}, conn_opts())
+
+            Process.sleep(300)
           end)
 
         assert log =~ "InvalidJWTToken: Fields `role` and `exp` are required in JWT"
@@ -121,6 +128,8 @@ defmodule RealtimeWeb.RealtimeChannelTest do
           capture_log(fn ->
             assert {:error, :missing_claims} =
                      connect(UserSocket, %{"log_level" => "warning"}, conn_opts)
+
+            Process.sleep(300)
           end)
 
         assert log =~ "InvalidJWTToken: Fields `role` and `exp` are required in JWT"
@@ -140,6 +149,8 @@ defmodule RealtimeWeb.RealtimeChannelTest do
           capture_log(fn ->
             assert {:error, :expired_token} =
                      connect(UserSocket, %{"log_level" => "warning"}, conn_opts)
+
+            Process.sleep(300)
           end)
 
         assert log =~ "InvalidJWTToken: Token as expired 1000 seconds ago"
@@ -156,6 +167,8 @@ defmodule RealtimeWeb.RealtimeChannelTest do
           capture_log(fn ->
             assert {:error, :expired_token} =
                      connect(UserSocket, %{"log_level" => "warning"}, conn_opts())
+
+            Process.sleep(300)
           end)
 
         assert log =~ "InvalidJWTToken: Token as expired 1000 seconds ago"
@@ -174,7 +187,7 @@ defmodule RealtimeWeb.RealtimeChannelTest do
     end
 
     test "successful connection proceeds with join" do
-      {:ok, %Socket{} = socket} = connect(UserSocket, %{}, conn_opts())
+      {:ok, %Socket{} = socket} = connect(UserSocket, %{"log_level" => "warning"}, conn_opts())
       assert {:ok, _, %Socket{}} = subscribe_and_join(socket, "realtime:test", %{})
     end
 
@@ -198,7 +211,9 @@ defmodule RealtimeWeb.RealtimeChannelTest do
       ]
 
       tenant = tenant_fixture(%{extensions: extensions})
-      {:ok, %Socket{} = socket} = connect(UserSocket, %{}, conn_opts(tenant.external_id))
+
+      {:ok, %Socket{} = socket} =
+        connect(UserSocket, %{"log_level" => "warning"}, conn_opts(tenant.external_id))
 
       assert {:error, %{reason: "Realtime was unable to connect to the project database"}} =
                subscribe_and_join(socket, "realtime:test", %{})
