@@ -17,6 +17,48 @@ defmodule Realtime.DatabaseTest do
     %{tenant: tenant}
   end
 
+  describe "check_tenant_connection/1" do
+    setup context do
+      extensions = [
+        %{
+          "type" => "postgres_cdc_rls",
+          "settings" => %{
+            "db_host" => "localhost",
+            "db_name" => "postgres",
+            "db_user" => "supabase_admin",
+            "db_password" => "postgres",
+            "db_port" => "5433",
+            "poll_interval" => 100,
+            "poll_max_changes" => 100,
+            "poll_max_record_bytes" => 1_048_576,
+            "region" => "us-east-1",
+            "ssl_enforced" => false,
+            "db_pool" => Map.get(context, :db_pool),
+            "subcriber_pool_size" => Map.get(context, :subcriber_pool),
+            "subs_pool_size" => Map.get(context, :db_pool)
+          }
+        }
+      ]
+
+      tenant = tenant_fixture(%{extensions: extensions})
+
+      %{tenant: tenant}
+    end
+
+    test "connects to a tenant database", %{tenant: tenant} do
+      assert {:ok, _} = Database.check_tenant_connection(tenant)
+    end
+
+    # Connection limit for docker tenant db is 100
+    @tag db_pool: 50,
+         subs_pool_size: 50,
+         subcriber_pool_size: 50
+    test "restricts connection if tenant database cannot receive more connections based on tenant pool",
+         %{tenant: tenant} do
+      assert {:error, :tenant_db_too_many_connections} = Database.check_tenant_connection(tenant)
+    end
+  end
+
   describe "replication_slot_teardown/1" do
     test "removes replication slots with the realtime prefix", %{tenant: tenant} do
       {:ok, conn} = Database.connect(tenant, "realtime_test", :stop)
@@ -77,21 +119,30 @@ defmodule Realtime.DatabaseTest do
     end
 
     test "on checkout error, handles raised exception as an error", %{db_conn: db_conn} do
-      assert capture_log(fn ->
-               Task.start(fn ->
-                 Database.transaction(db_conn, fn conn ->
-                   Postgrex.query!(conn, "SELECT pg_sleep(14)", [])
-                 end)
-               end)
+      for _ <- 1..5 do
+        Task.start(fn ->
+          Database.transaction(
+            db_conn,
+            fn conn -> Postgrex.query!(conn, "SELECT pg_sleep(20)", []) end,
+            timeout: 20000
+          )
+        end)
+      end
 
-               assert {:error, %DBConnection.ConnectionError{reason: :queue_timeout}} =
-                        Task.async(fn ->
-                          Database.transaction(db_conn, fn conn ->
-                            Postgrex.query!(conn, "SELECT pg_sleep(6)", [])
-                          end)
-                        end)
-                        |> Task.await(15000)
-             end) =~ "ErrorExecutingTransaction"
+      log =
+        capture_log(fn ->
+          assert {:error, %DBConnection.ConnectionError{reason: :queue_timeout}} =
+                   Task.async(fn ->
+                     Database.transaction(
+                       db_conn,
+                       fn conn -> Postgrex.query!(conn, "SELECT pg_sleep(11)", []) end,
+                       timeout: 15000
+                     )
+                   end)
+                   |> Task.await(20000)
+        end)
+
+      assert log =~ "ErrorExecutingTransaction"
     end
 
     test "run call using RPC", %{db_conn: db_conn} do

@@ -10,17 +10,36 @@ defmodule Realtime.Tenants.ConnectTest do
   alias Realtime.UsersCounter
 
   setup do
+    :ets.delete_all_objects(Connect)
     tenant = tenant_fixture()
     Cleanup.ensure_no_replication_slot()
     %{tenant: tenant}
   end
 
   describe "lookup_or_start_connection/1" do
-    test "if tenant exists and connected, returns the db connection", %{tenant: tenant} do
+    test "if tenant exists and connected, returns the db connection and tracks it in ets", %{
+      tenant: tenant
+    } do
       assert {:ok, db_conn} = Connect.lookup_or_start_connection(tenant.external_id)
       Process.sleep(100)
       assert is_pid(db_conn)
       Connect.shutdown(tenant.external_id)
+    end
+
+    test "tracks multiple users that connect and disconnect" do
+      expected =
+        for _ <- 1..10 do
+          tenant = tenant_fixture()
+          assert {:ok, db_conn} = Connect.lookup_or_start_connection(tenant.external_id)
+          Process.sleep(100)
+          assert is_pid(db_conn)
+          Connect.shutdown(tenant.external_id)
+          {tenant.external_id}
+        end
+
+      result = :ets.select(Connect, [{:"$1", [], [:"$1"]}]) |> Enum.sort()
+      expected = Enum.sort(expected)
+      assert result == expected
     end
 
     test "on database disconnect, returns new connection", %{tenant: tenant} do
@@ -251,6 +270,16 @@ defmodule Realtime.Tenants.ConnectTest do
       assert ReplicationConnection.whereis(tenant.external_id) == nil
       assert Listen.whereis(tenant.external_id) == nil
     end
+
+    test "syn with no connection", %{tenant: tenant} do
+      with_mock :syn, [], lookup: fn _, _ -> {nil, %{conn: nil}} end do
+        assert {:error, :tenant_database_unavailable} =
+                 Connect.lookup_or_start_connection(tenant.external_id)
+
+        assert {:error, :initializing} =
+                 Connect.get_status(tenant.external_id)
+      end
+    end
   end
 
   describe "shutdown/1" do
@@ -271,6 +300,34 @@ defmodule Realtime.Tenants.ConnectTest do
 
     test "if tenant does not exist, does nothing" do
       assert :ok = Connect.shutdown("none")
+    end
+
+    test "tenant not able to connect if database has not enough connections" do
+      extensions = [
+        %{
+          "type" => "postgres_cdc_rls",
+          "settings" => %{
+            "db_host" => "localhost",
+            "db_name" => "postgres",
+            "db_user" => "supabase_admin",
+            "db_password" => "postgres",
+            "db_port" => "5433",
+            "poll_interval" => 100,
+            "poll_max_changes" => 100,
+            "poll_max_record_bytes" => 1_048_576,
+            "region" => "us-east-1",
+            "ssl_enforced" => false,
+            "db_pool" => 100,
+            "subcriber_pool_size" => 100,
+            "subs_pool_size" => 100
+          }
+        }
+      ]
+
+      tenant = tenant_fixture(%{extensions: extensions})
+
+      assert {:error, :tenant_db_too_many_connections} =
+               Connect.lookup_or_start_connection(tenant.external_id)
     end
   end
 

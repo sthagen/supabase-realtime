@@ -76,11 +76,11 @@ defmodule Realtime.Tenants.Connect do
              | :tenant_database_connection_initializing}
   def get_status(tenant_id) do
     case :syn.lookup(__MODULE__, tenant_id) do
-      {_, %{conn: conn}} when not is_nil(conn) ->
-        {:ok, conn}
-
       {_, %{conn: nil}} ->
         {:error, :initializing}
+
+      {_, %{conn: conn}} ->
+        {:ok, conn}
 
       :undefined ->
         Logger.warning("Connection process starting up")
@@ -109,7 +109,13 @@ defmodule Realtime.Tenants.Connect do
       {:error, {:already_started, _}} ->
         get_status(tenant_id)
 
-      {:error, :killed} ->
+      {:error, {:shutdown, :tenant_db_too_many_connections}} ->
+        {:error, :tenant_db_too_many_connections}
+
+      {:error, {:shutdown, :tenant_not_found}} ->
+        {:error, :tenant_not_found}
+
+      {:error, :shutdown} ->
         log_error("UnableToConnectToTenantDatabase", "Unable to connect to tenant database")
         {:error, :tenant_database_unavailable}
 
@@ -165,12 +171,15 @@ defmodule Realtime.Tenants.Connect do
   def init(%{tenant_id: tenant_id} = state) do
     Logger.metadata(external_id: tenant_id, project: tenant_id)
 
-    with {:ok, acc} <- Piper.run(@pipes, state) do
-      {:ok, acc, {:continue, :run_migrations}}
-    else
+    case Piper.run(@pipes, state) do
+      {:ok, acc} ->
+        {:ok, acc, {:continue, :run_migrations}}
+
       {:error, :tenant_not_found} ->
-        log_error("TenantNotFound", "Tenant not found")
-        {:stop, :shutdown}
+        {:stop, {:shutdown, :tenant_not_found}}
+
+      {:error, :tenant_db_too_many_connections} ->
+        {:stop, {:shutdown, :tenant_db_too_many_connections}}
 
       {:error, error} ->
         log_error("UnableToConnectToTenantDatabase", error)
@@ -217,12 +226,13 @@ defmodule Realtime.Tenants.Connect do
   def handle_continue(:setup_connected_user_events, state) do
     %{
       check_connected_user_interval: check_connected_user_interval,
-      connected_users_bucket: connected_users_bucket
+      connected_users_bucket: connected_users_bucket,
+      tenant_id: tenant_id
     } = state
 
     :ok = Phoenix.PubSub.subscribe(Realtime.PubSub, "realtime:operations:invalidate_cache")
     send_connected_user_check_message(connected_users_bucket, check_connected_user_interval)
-
+    :ets.insert(__MODULE__, {tenant_id})
     {:noreply, state}
   end
 

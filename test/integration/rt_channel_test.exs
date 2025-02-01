@@ -20,6 +20,7 @@ defmodule Realtime.Integration.RtChannelTest do
   alias Realtime.Integration.WebsocketClient
   alias Realtime.Repo
   alias Realtime.Tenants
+  alias Realtime.Tenants.Cache
   alias Realtime.Tenants.Authorization
   alias Realtime.Tenants.Migrations
 
@@ -74,6 +75,8 @@ defmodule Realtime.Integration.RtChannelTest do
   end
 
   setup do
+    Cache.invalidate_tenant_cache(@external_id)
+    Process.sleep(500)
     [tenant] = Tenant |> Repo.all() |> Repo.preload(:extensions)
     :ok = Migrations.run_migrations(tenant)
     %{tenant: tenant}
@@ -962,8 +965,7 @@ defmodule Realtime.Integration.RtChannelTest do
                              payload: %{
                                "status" => "error",
                                "extension" => "system",
-                               "message" =>
-                                 "Realtime was unable to connect to the project database"
+                               "message" => "Realtime was unable to connect to the project database"
                              },
                              topic: ^realtime_topic,
                              join_ref: nil,
@@ -1371,10 +1373,9 @@ defmodule Realtime.Integration.RtChannelTest do
       realtime_topic = "realtime:#{random_string()}"
       WebsocketClient.join(socket, realtime_topic, %{config: config})
 
-      for _ <- 1..10 do
-        Process.sleep(100)
-
+      for _ <- 1..1000 do
         WebsocketClient.send_event(socket, realtime_topic, "broadcast", %{})
+        1..5 |> Enum.random() |> Process.sleep()
       end
 
       assert_receive %Message{
@@ -1446,8 +1447,9 @@ defmodule Realtime.Integration.RtChannelTest do
       config = %{broadcast: %{self: true}, private: false}
       realtime_topic = "realtime:#{random_string()}"
 
-      for _ <- 1..15 do
+      for _ <- 1..1000 do
         WebsocketClient.join(socket, realtime_topic, %{config: config})
+        1..10 |> Enum.random() |> Process.sleep()
       end
 
       assert_receive %Message{
@@ -1520,7 +1522,7 @@ defmodule Realtime.Integration.RtChannelTest do
   end
 
   defp token_valid(role, claims \\ %{}), do: generate_token(Map.put(claims, :role, role))
-  defp token_no_role(), do: generate_token()
+  defp token_no_role, do: generate_token()
 
   defp generate_token(claims \\ %{}) do
     claims =
