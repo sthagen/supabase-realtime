@@ -10,11 +10,7 @@ defmodule Realtime.PromEx.Plugins.Tenants do
   @event_connected [:prom_ex, :plugin, :realtime, :tenants, :connected]
 
   @impl true
-  def event_metrics(opts) do
-    rpc_metrics(opts)
-  end
-
-  defp rpc_metrics(_opts) do
+  def event_metrics(_) do
     Event.build(:realtime, [
       distribution(
         [:realtime, :rpc],
@@ -22,7 +18,8 @@ defmodule Realtime.PromEx.Plugins.Tenants do
         description: "Latency of rpc calls triggered by a tenant action",
         measurement: :latency,
         unit: {:microsecond, :millisecond},
-        reporter_options: [buckets: [10, 50, 250, 1500, 15_000]]
+        tags: [:success],
+        reporter_options: [buckets: [10, 250, 5000, 15_000]]
       )
     ])
   end
@@ -58,9 +55,7 @@ defmodule Realtime.PromEx.Plugins.Tenants do
         -1
       end
 
-    execute_metrics(@event_connected, %{
-      connected: connected
-    })
+    execute_metrics(@event_connected, %{connected: connected})
   end
 
   defp execute_metrics(event, metrics) do
