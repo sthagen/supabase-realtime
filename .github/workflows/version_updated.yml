@@ -1,8 +1,19 @@
 on:
   pull_request:
-    types: [opened, reopened, synchronize]
     branches:
       - "main"
+    paths:
+      - "lib/**"
+      - "config/**"
+      - "priv/**"
+      - "assets/**"
+      - "rel/**"
+      - "mix.exs"
+      - "Dockerfile"
+      - "run.sh"
+
+permissions:
+  contents: read
 
 name: Default Checks
 

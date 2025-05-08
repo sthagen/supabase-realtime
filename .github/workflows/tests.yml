@@ -3,9 +3,20 @@ on:
   pull_request:
     branches:
       - main
+    paths:
+      - "lib/**"
+      - "config/**"
+      - "priv/**"
+      - "assets/**"
+      - "rel/**"
+      - "mix.exs"
+      - "Dockerfile"
+      - "run.sh"
+
   push:
     branches:
       - main
+
 jobs:
   format:
     name: Tests
