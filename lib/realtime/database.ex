@@ -87,9 +87,6 @@ defmodule Realtime.Database do
 
   @available_connection_factor 0.95
 
-  defguardp can_connect?(available_connections, required_pool)
-            when required_pool * @available_connection_factor < available_connections
-
   @doc """
   Checks if the Tenant CDC extension information is properly configured and that we're able to query against the tenant database.
   """
@@ -107,15 +104,22 @@ defmodule Realtime.Database do
 
       with {:ok, conn} <- connect_db(check_settings) do
         query =
-          "select (current_setting('max_connections')::int - count(*))::int from pg_stat_activity"
+          "select (current_setting('max_connections')::int - count(*))::int from pg_stat_activity where application_name != 'realtime_connect'"
 
         case Postgrex.query(conn, query, []) do
-          {:ok, %{rows: [[available_connections]]}}
-          when can_connect?(available_connections, required_pool) ->
-            {:ok, conn}
+          {:ok, %{rows: [[available_connections]]}} ->
+            requirement = ceil(required_pool * @available_connection_factor)
 
-          {:ok, _} ->
-            {:error, :tenant_db_too_many_connections}
+            if requirement < available_connections do
+              {:ok, conn}
+            else
+              log_error(
+                "DatabaseLackOfConnections",
+                "Only #{available_connections} available connections. At least #{requirement} connections are required."
+              )
+
+              {:error, :tenant_db_too_many_connections}
+            end
 
           {:error, e} ->
             Process.exit(conn, :kill)
@@ -352,13 +356,13 @@ defmodule Realtime.Database do
       "realtime_subscription_manager",
       "realtime_subscription_manager_pub",
       "realtime_subscription_checker",
-      "realtime_connect",
       "realtime_health_check",
       "realtime_janitor",
       "realtime_migrations",
       "realtime_broadcast_changes",
       "realtime_rls",
-      "realtime_replication_slot_teardown"
+      "realtime_replication_slot_teardown",
+      "realtime_connect"
     ]
 
     Enum.reduce(application_names, 0, fn application_name, acc ->
