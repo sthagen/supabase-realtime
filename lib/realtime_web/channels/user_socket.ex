@@ -1,9 +1,6 @@
 defmodule RealtimeWeb.UserSocket do
   use Phoenix.Socket
-
-  require Logger
-
-  import Realtime.Logs
+  use Realtime.Logs
 
   alias Realtime.Api.Tenant
   alias Realtime.Crypto
@@ -84,6 +81,10 @@ defmodule RealtimeWeb.UserSocket do
         {:error, :missing_claims} ->
           log_error_with_token_metadata("Fields `role` and `exp` are required in JWT", token)
           {:error, :missing_claims}
+
+        {:error, :token_malformed} ->
+          log_error("MalformedJWT", "The token provided is not a valid JWT")
+          {:error, :token_malformed}
 
         error ->
           log_error("ErrorConnectingToWebsocket", error)

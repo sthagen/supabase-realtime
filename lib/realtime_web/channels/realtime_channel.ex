@@ -3,8 +3,7 @@ defmodule RealtimeWeb.RealtimeChannel do
   Used for handling channels and subscriptions.
   """
   use RealtimeWeb, :channel
-  require Logger
-  import Realtime.Logs
+  use Realtime.Logs
 
   alias DBConnection.Backoff
 
@@ -107,10 +106,6 @@ defmodule RealtimeWeb.RealtimeChannel do
 
       {:error, :missing_claims} ->
         msg = "Fields `role` and `exp` are required in JWT"
-        Logging.log_error_message(:error, "InvalidJWTToken", msg)
-
-      {:error, :expected_claims_map} ->
-        msg = "Token claims must be a map"
         Logging.log_error_message(:error, "InvalidJWTToken", msg)
 
       {:error, :unauthorized, msg} ->
@@ -328,6 +323,10 @@ defmodule RealtimeWeb.RealtimeChannel do
     shutdown_response(socket, message)
   end
 
+  def handle_in("access_token", %{"access_token" => "sb_" <> _}, socket) do
+    {:noreply, socket}
+  end
+
   def handle_in("access_token", %{"access_token" => refresh_token}, %{assigns: %{access_token: access_token}} = socket)
       when refresh_token == access_token do
     {:noreply, socket}
@@ -380,8 +379,8 @@ defmodule RealtimeWeb.RealtimeChannel do
       {:error, :missing_claims} ->
         shutdown_response(socket, "Fields `role` and `exp` are required in JWT")
 
-      {:error, :expected_claims_map} ->
-        shutdown_response(socket, "Token claims must be a map")
+      {:error, :token_malformed} ->
+        shutdown_response(socket, "The token provided is not a valid JWT")
 
       {:error, :unable_to_set_policies, _msg} ->
         shutdown_response(socket, "Realtime was unable to connect to the project database")
@@ -556,14 +555,22 @@ defmodule RealtimeWeb.RealtimeChannel do
          {:ok, socket} <- maybe_assign_policies(topic, db_conn, socket) do
       if ref = assigns[:confirm_token_ref], do: Helpers.cancel_timer(ref)
 
-      interval = min(@confirm_token_ms_interval, exp_diff * 1_000)
+      interval = min(@confirm_token_ms_interval, exp_diff * 1000)
       ref = Process.send_after(self(), :confirm_token, interval)
 
       {:ok, claims, ref, access_token, socket}
     else
-      {:error, error} -> {:error, error}
-      {:error, error, message} -> {:error, error, message}
-      e -> {:error, e}
+      {:error, :token_malformed} ->
+        {:error, "The token provided is not a valid JWT"}
+
+      {:error, error} ->
+        {:error, error}
+
+      {:error, error, message} ->
+        {:error, error, message}
+
+      e ->
+        {:error, e}
     end
   end
 

@@ -508,6 +508,15 @@ defmodule Realtime.Integration.RtChannelTest do
            :authenticated_read_broadcast_and_presence,
            :authenticated_write_broadcast_and_presence
          ]
+    test "badly formatted jwt token", %{tenant: tenant} do
+      log =
+        capture_log(fn ->
+          WebsocketClient.connect(self(), uri(tenant), @serializer, [{"x-api-key", "bad_token"}])
+        end)
+
+      assert log =~ "MalformedJWT: The token provided is not a valid JWT"
+    end
+
     test "invalid JWT with expired token", %{tenant: tenant} do
       log =
         capture_log(fn -> get_connection(tenant, "authenticated", %{:exp => System.system_time(:second) - 1000}) end)
@@ -625,8 +634,15 @@ defmodule Realtime.Integration.RtChannelTest do
       assert_receive %Message{
         topic: ^realtime_topic,
         event: "system",
-        payload: %{"extension" => "system", "message" => "Token claims must be a map", "status" => "error"}
+        payload: %{
+          "extension" => "system",
+          "message" => msg,
+          "status" => "error"
+        }
       }
+
+      assert_receive %Message{event: "phx_close"}
+      assert msg =~ "The token provided is not a valid JWT"
     end
 
     test "on expired access_token the socket sends an error message", %{tenant: tenant, topic: topic} do
@@ -805,7 +821,10 @@ defmodule Realtime.Integration.RtChannelTest do
 
       assert_receive %Message{
                        event: "phx_reply",
-                       payload: %{"status" => "error", "response" => %{"reason" => "Token claims must be a map"}},
+                       payload: %{
+                         "status" => "error",
+                         "response" => %{"reason" => "The token provided is not a valid JWT"}
+                       },
                        topic: ^realtime_topic
                      },
                      500
@@ -853,6 +872,42 @@ defmodule Realtime.Integration.RtChannelTest do
 
         assert log =~ "Realtime was unable to connect to the project database"
       end
+    end
+
+    test "on sb prefixed access_token the socket ignores the message and respects JWT expiry time", %{
+      tenant: tenant,
+      topic: topic
+    } do
+      sub = random_string()
+
+      {socket, access_token} =
+        get_connection(tenant, "authenticated", %{sub: sub, exp: System.system_time(:second) + 5})
+
+      config = %{broadcast: %{self: true}, private: false}
+      realtime_topic = "realtime:#{topic}"
+
+      WebsocketClient.join(socket, realtime_topic, %{config: config, access_token: access_token})
+
+      assert_receive %Message{event: "phx_reply"}, 500
+      assert_receive %Message{event: "presence_state"}, 500
+
+      WebsocketClient.send_event(socket, realtime_topic, "access_token", %{
+        "access_token" => "sb_publishable_-fake_key"
+      })
+
+      # Check if the new token does not trigger a shutdown
+      refute_receive %Message{event: "system", topic: ^realtime_topic}, 100
+
+      # Await to check if channel respects token expiry time
+      assert_receive %Message{
+                       event: "system",
+                       payload: %{"extension" => "system", "message" => msg, "status" => "error"},
+                       topic: ^realtime_topic
+                     },
+                     5000
+
+      assert_receive %Message{event: "phx_close", topic: ^realtime_topic}
+      msg =~ "Token has expired"
     end
   end
 
