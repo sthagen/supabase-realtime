@@ -13,6 +13,7 @@ defmodule Realtime.Tenants.AuthorizationRemoteTest do
   alias Realtime.Tenants.Authorization.Policies
   alias Realtime.Tenants.Authorization.Policies.BroadcastPolicies
   alias Realtime.Tenants.Authorization.Policies.PresencePolicies
+  alias Realtime.Tenants.Connect
 
   setup [:rls_context]
 
@@ -77,56 +78,49 @@ defmodule Realtime.Tenants.AuthorizationRemoteTest do
   describe "database error" do
     @tag role: "authenticated",
          policies: [:authenticated_read_broadcast_and_presence, :authenticated_write_broadcast_and_presence],
-         timeout: :timer.minutes(2)
+         timeout: :timer.minutes(1)
     test "handles small pool size", context do
       task =
         Task.async(fn ->
           :erpc.call(node(context.db_conn), Postgrex, :query!, [
             context.db_conn,
-            "SELECT pg_sleep(59)",
+            "SELECT pg_sleep(19)",
             [],
-            [timeout: :timer.minutes(1)]
+            [timeout: :timer.seconds(20)]
           ])
         end)
 
       Process.sleep(100)
 
-      assert {:error, :increase_connection_pool} =
-               Authorization.get_read_authorizations(
-                 %Policies{},
-                 context.db_conn,
-                 context.authorization_context
-               )
+      log =
+        capture_log(fn ->
+          t1 =
+            Task.async(fn ->
+              assert {:error, :increase_connection_pool} =
+                       Authorization.get_read_authorizations(
+                         %Policies{},
+                         context.db_conn,
+                         context.authorization_context
+                       )
+            end)
 
-      assert {:error, :increase_connection_pool} =
-               Authorization.get_write_authorizations(
-                 %Policies{},
-                 context.db_conn,
-                 context.authorization_context
-               )
+          t2 =
+            Task.async(fn ->
+              assert {:error, :increase_connection_pool} =
+                       Authorization.get_write_authorizations(
+                         %Policies{},
+                         context.db_conn,
+                         context.authorization_context
+                       )
+            end)
 
-      assert {:error, :increase_connection_pool} =
-               Authorization.get_read_authorizations(
-                 %Policies{},
-                 context.db_conn,
-                 context.authorization_context
-               )
+          Task.await_many([t1, t2], 20_000)
+        end)
 
-      assert {:error, :increase_connection_pool} =
-               Authorization.get_write_authorizations(
-                 %Policies{},
-                 context.db_conn,
-                 context.authorization_context
-               )
+      external_id = context.tenant.external_id
+      assert log =~ "project=#{external_id} external_id=#{external_id} [error] ErrorExecutingTransaction"
 
-      assert {:error, :increase_connection_pool} =
-               Authorization.get_write_authorizations(
-                 %Policies{},
-                 context.db_conn,
-                 context.authorization_context
-               )
-
-      Task.await(task, :timer.minutes(1))
+      Task.await(task, :timer.seconds(30))
     end
 
     @tag role: "authenticated",
@@ -205,6 +199,9 @@ defmodule Realtime.Tenants.AuthorizationRemoteTest do
 
   defp rls_context(context) do
     tenant = Realtime.Tenants.get_tenant_by_external_id("dev_tenant")
+    Connect.shutdown("dev_tenant")
+    # Waiting for :syn to unregister
+    Process.sleep(100)
 
     {:ok, local_db_conn} = Database.connect(tenant, "realtime_test", :stop)
     topic = random_string()
@@ -230,7 +227,7 @@ defmodule Realtime.Tenants.AuthorizationRemoteTest do
     create_rls_policies(local_db_conn, context.policies, %{topic: topic})
 
     {:ok, node} = Clustered.start()
-    {:ok, db_conn} = :erpc.call(node, Realtime.Tenants.Connect, :connect, ["dev_tenant"])
+    {:ok, db_conn} = :erpc.call(node, Connect, :connect, ["dev_tenant"])
 
     assert node(db_conn) == node
 
