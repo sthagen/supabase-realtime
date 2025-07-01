@@ -17,7 +17,7 @@ defmodule Realtime.RateCounter do
   alias Realtime.RateCounter
   alias Realtime.Telemetry
 
-  @idle_shutdown :timer.seconds(5)
+  @idle_shutdown :timer.hours(1)
   @tick :timer.seconds(1)
   @max_bucket_len 60
   @cache __MODULE__
@@ -75,6 +75,7 @@ defmodule Realtime.RateCounter do
 
     Enum.each(keys, fn {{_, _, key}, {pid, _}} ->
       if Process.alive?(pid), do: GenServer.stop(pid)
+      GenCounter.stop(key)
       Cachex.del!(@cache, key)
     end)
 

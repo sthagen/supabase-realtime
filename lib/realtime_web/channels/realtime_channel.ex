@@ -397,7 +397,8 @@ defmodule RealtimeWeb.RealtimeChannel do
         access_token: access_token,
         pg_sub_ref: pg_sub_ref,
         channel_name: channel_name,
-        pg_change_params: pg_change_params
+        pg_change_params: pg_change_params,
+        tenant: tenant
       }
     } = socket
 
@@ -405,7 +406,7 @@ defmodule RealtimeWeb.RealtimeChannel do
 
     with {:ok, claims, confirm_token_ref, _, socket} <- confirm_token(socket),
          socket = assign_authorization_context(socket, channel_name, access_token, claims),
-         {:ok, db_conn} <- Connect.lookup_or_start_connection(socket.assigns.tenant),
+         {:ok, db_conn} <- Connect.lookup_or_start_connection(tenant),
          {:ok, socket} <- maybe_assign_policies(channel_name, db_conn, socket) do
       Helpers.cancel_timer(pg_sub_ref)
       pg_change_params = Enum.map(pg_change_params, &Map.put(&1, :claims, claims))
@@ -476,7 +477,6 @@ defmodule RealtimeWeb.RealtimeChannel do
     GenCounter.new(id)
 
     RateCounter.new(id,
-      idle_shutdown: :infinity,
       telemetry: %{
         event_name: [:channel, :joins],
         measurements: %{limit: limits.max_joins_per_second},
@@ -524,7 +524,6 @@ defmodule RealtimeWeb.RealtimeChannel do
     GenCounter.new(key)
 
     RateCounter.new(key,
-      idle_shutdown: :infinity,
       telemetry: %{
         event_name: [:channel, :events],
         measurements: %{limit: limits.max_events_per_second},
@@ -545,7 +544,6 @@ defmodule RealtimeWeb.RealtimeChannel do
     GenCounter.new(key)
 
     RateCounter.new(key,
-      idle_shutdown: :infinity,
       telemetry: %{
         event_name: [:channel, :presence_events],
         measurements: %{limit: limits.max_events_per_second},
@@ -679,7 +677,6 @@ defmodule RealtimeWeb.RealtimeChannel do
     GenCounter.new(key)
 
     RateCounter.new(key,
-      idle_shutdown: :infinity,
       telemetry: %{event_name: [:channel, :db_events], measurements: %{}, metadata: %{tenant: tenant}}
     )
 
