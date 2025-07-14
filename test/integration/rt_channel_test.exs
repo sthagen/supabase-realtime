@@ -1609,6 +1609,14 @@ defmodule Realtime.Integration.RtChannelTest do
   describe "socket disconnect" do
     setup [:rls_context]
 
+    test "tenant already suspended", %{topic: topic} do
+      tenant = Containers.checkout_tenant(run_migrations: true)
+      {:ok, _} = Realtime.Api.update_tenant(tenant, %{suspend: true})
+      {:error, %Mint.WebSocket.UpgradeFailureError{}} = get_connection(tenant, "anon")
+
+      refute_receive _any
+    end
+
     test "on jwks the socket closes and sends a system message", %{tenant: tenant, topic: topic} do
       {socket, _} = get_connection(tenant, "authenticated")
       config = %{broadcast: %{self: true}, private: false}
@@ -2175,6 +2183,7 @@ defmodule Realtime.Integration.RtChannelTest do
     # Sleeping so that syn can forget about this Connect process
     Process.sleep(100)
     {:ok, db_conn} = Connect.lookup_or_start_connection(tenant.external_id)
+    assert Connect.ready?(tenant.external_id)
     %{db_conn: db_conn}
   end
 
