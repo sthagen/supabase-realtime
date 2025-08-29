@@ -21,6 +21,7 @@ defmodule RealtimeWeb.RealtimeChannel do
   alias Realtime.Tenants.Authorization.Policies.PresencePolicies
   alias Realtime.Tenants.Connect
 
+  alias RealtimeWeb.Channels.Payloads.Join
   alias RealtimeWeb.ChannelsAuthorization
   alias RealtimeWeb.RealtimeChannel.BroadcastHandler
   alias RealtimeWeb.RealtimeChannel.MessageDispatcher
@@ -53,6 +54,15 @@ defmodule RealtimeWeb.RealtimeChannel do
       |> assign_presence_counter()
       |> assign(:private?, !!params["config"]["private"])
       |> assign(:policies, nil)
+
+    case Join.validate(params) do
+      {:ok, _join} ->
+        nil
+
+      {:error, :invalid_join_payload, errors} ->
+        log_params = params |> Map.put("access_token", "<redacted>") |> Map.put("user_token", "<redacted>")
+        log_error(socket, "InvalidJoinPayload", %{changeset_errors: errors, params: log_params})
+    end
 
     with :ok <- SignalHandler.shutdown_in_progress?(),
          :ok <- only_private?(tenant_id, socket),
@@ -538,18 +548,14 @@ defmodule RealtimeWeb.RealtimeChannel do
     end
   end
 
-  defp assign_access_token(%{assigns: %{headers: headers}} = socket, params) do
+  defp assign_access_token(%{assigns: %{tenant_token: tenant_token}} = socket, params) do
     access_token = Map.get(params, "access_token") || Map.get(params, "user_token")
-    {_, header} = Enum.find(headers, {nil, nil}, fn {k, _} -> k == "x-api-key" end)
 
     case access_token do
-      nil -> assign(socket, :access_token, header)
-      "sb_" <> _ -> assign(socket, :access_token, header)
+      "sb_" <> _ -> assign(socket, :access_token, tenant_token)
       _ -> handle_access_token(socket, params)
     end
   end
-
-  defp assign_access_token(socket, params), do: handle_access_token(socket, params)
 
   defp handle_access_token(%{assigns: %{tenant_token: _tenant_token}} = socket, %{"user_token" => user_token})
        when is_binary(user_token) do
