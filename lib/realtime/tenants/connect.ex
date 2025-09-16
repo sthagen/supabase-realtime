@@ -19,7 +19,6 @@ defmodule Realtime.Tenants.Connect do
   alias Realtime.Tenants.Connect.GetTenant
   alias Realtime.Tenants.Connect.Piper
   alias Realtime.Tenants.Connect.RegisterProcess
-  alias Realtime.Tenants.Connect.StartCounters
   alias Realtime.Tenants.Migrations
   alias Realtime.Tenants.ReplicationConnection
   alias Realtime.UsersCounter
@@ -83,14 +82,13 @@ defmodule Realtime.Tenants.Connect do
           | {:error, :tenant_database_connection_initializing}
   def get_status(tenant_id) do
     case :syn.lookup(__MODULE__, tenant_id) do
-      {_pid, %{conn: nil}} ->
-        wait_for_connection(tenant_id)
+      {pid, %{conn: nil}} ->
+        wait_for_connection(pid, tenant_id)
 
       {_, %{conn: conn}} ->
         {:ok, conn}
 
       :undefined ->
-        Logger.warning("Connection process starting up")
         {:error, :tenant_database_connection_initializing}
 
       error ->
@@ -101,7 +99,7 @@ defmodule Realtime.Tenants.Connect do
 
   def syn_topic(tenant_id), do: "connect:#{tenant_id}"
 
-  defp wait_for_connection(tenant_id) do
+  defp wait_for_connection(pid, tenant_id) do
     RealtimeWeb.Endpoint.subscribe(syn_topic(tenant_id))
 
     # We do a lookup after subscribing because we could've missed a message while subscribing
@@ -112,9 +110,18 @@ defmodule Realtime.Tenants.Connect do
       _ ->
         # Wait for up to 5 seconds for the ready event
         receive do
-          %{event: "ready", payload: %{conn: conn}} -> {:ok, conn}
+          %{event: "ready", payload: %{pid: ^pid, conn: conn}} ->
+            {:ok, conn}
+
+          %{event: "connect_down", payload: %{pid: ^pid, reason: {:shutdown, :tenant_db_too_many_connections}}} ->
+            {:error, :tenant_db_too_many_connections}
+
+          %{event: "connect_down", payload: %{pid: ^pid, reason: _reason}} ->
+            metadata = [external_id: tenant_id, project: tenant_id]
+            log_error("UnableToConnectToTenantDatabase", "Unable to connect to tenant database", metadata)
+            {:error, :tenant_database_unavailable}
         after
-          5_000 -> {:error, :initializing}
+          15_000 -> {:error, :initializing}
         end
     end
   after
@@ -138,16 +145,6 @@ defmodule Realtime.Tenants.Connect do
 
       {:error, {:already_started, _}} ->
         get_status(tenant_id)
-
-      {:error, {:shutdown, :tenant_db_too_many_connections}} ->
-        {:error, :tenant_db_too_many_connections}
-
-      {:error, {:shutdown, :tenant_not_found}} ->
-        {:error, :tenant_not_found}
-
-      {:error, :shutdown} ->
-        log_error("UnableToConnectToTenantDatabase", "Unable to connect to tenant database", metadata)
-        {:error, :tenant_database_unavailable}
 
       {:error, error} ->
         log_error("UnableToConnectToTenantDatabase", error, metadata)
@@ -209,30 +206,33 @@ defmodule Realtime.Tenants.Connect do
   def init(%{tenant_id: tenant_id} = state) do
     Logger.metadata(external_id: tenant_id, project: tenant_id)
 
+    {:ok, state, {:continue, :db_connect}}
+  end
+
+  @impl true
+  def handle_continue(:db_connect, state) do
     pipes = [
       GetTenant,
       CheckConnection,
-      StartCounters,
       RegisterProcess
     ]
 
     case Piper.run(pipes, state) do
       {:ok, acc} ->
-        {:ok, acc, {:continue, :run_migrations}}
+        {:noreply, acc, {:continue, :run_migrations}}
 
       {:error, :tenant_not_found} ->
-        {:stop, {:shutdown, :tenant_not_found}}
+        {:stop, {:shutdown, :tenant_not_found}, state}
 
       {:error, :tenant_db_too_many_connections} ->
-        {:stop, {:shutdown, :tenant_db_too_many_connections}}
+        {:stop, {:shutdown, :tenant_db_too_many_connections}, state}
 
       {:error, error} ->
         log_error("UnableToConnectToTenantDatabase", error)
-        {:stop, :shutdown}
+        {:stop, :shutdown, state}
     end
   end
 
-  @impl true
   def handle_continue(:run_migrations, state) do
     %{tenant: tenant, db_conn_pid: db_conn_pid} = state
     Logger.warning("Tenant #{tenant.external_id} is initializing: #{inspect(node())}")
@@ -252,31 +252,10 @@ defmodule Realtime.Tenants.Connect do
   end
 
   def handle_continue(:start_replication, state) do
-    %{tenant: tenant} = state
-
-    with {:ok, replication_connection_pid} <- ReplicationConnection.start(tenant, self()) do
-      replication_connection_reference = Process.monitor(replication_connection_pid)
-
-      state = %{
-        state
-        | replication_connection_pid: replication_connection_pid,
-          replication_connection_reference: replication_connection_reference
-      }
-
-      {:noreply, state, {:continue, :setup_connected_user_events}}
-    else
-      {:error, :max_wal_senders_reached} ->
-        log_error("ReplicationMaxWalSendersReached", "Tenant database has reached the maximum number of WAL senders")
-        {:stop, :shutdown, state}
-
-      {:error, error} ->
-        log_error("StartReplicationFailed", error)
-        {:stop, :shutdown, state}
+    case start_replication_connection(state) do
+      {:ok, state} -> {:noreply, state, {:continue, :setup_connected_user_events}}
+      {:error, state} -> {:stop, :shutdown, state}
     end
-  rescue
-    error ->
-      log_error("StartReplicationFailed", error)
-      {:stop, :shutdown, state}
   end
 
   def handle_continue(:setup_connected_user_events, state) do
@@ -348,13 +327,30 @@ defmodule Realtime.Tenants.Connect do
     {:stop, :shutdown, state}
   end
 
+  @replication_recovery_backoff 1000
+
   # Handle replication connection termination
   def handle_info(
         {:DOWN, replication_connection_reference, _, _, _},
         %{replication_connection_reference: replication_connection_reference} = state
       ) do
-    Logger.warning("Replication connection has died")
-    {:stop, :shutdown, state}
+    log_warning("ReplicationConnectionDown", "Replication connection has been terminated")
+    Process.send_after(self(), :recover_replication_connection, @replication_recovery_backoff)
+    state = %{state | replication_connection_pid: nil, replication_connection_reference: nil}
+    {:noreply, state}
+  end
+
+  @replication_connection_query "SELECT 1 from pg_stat_activity where application_name='realtime_replication_connection'"
+  def handle_info(:recover_replication_connection, state) do
+    with %{num_rows: 0} <- Postgrex.query!(state.db_conn_pid, @replication_connection_query, []),
+         {:ok, state} <- start_replication_connection(state) do
+      {:noreply, state}
+    else
+      _ ->
+        log_error("ReplicationConnectionRecoveryFailed", "Replication connection recovery failed")
+        Process.send_after(self(), :recover_replication_connection, @replication_recovery_backoff)
+        {:noreply, state}
+    end
   end
 
   def handle_info(_, state), do: {:noreply, state}
@@ -375,6 +371,7 @@ defmodule Realtime.Tenants.Connect do
 
   ## Private functions
   defp call_external_node(tenant_id, opts) do
+    Logger.warning("Connection process starting up")
     rpc_timeout = Keyword.get(opts, :rpc_timeout, @rpc_timeout_default)
 
     with tenant <- Tenants.Cache.get_tenant_by_external_id(tenant_id),
@@ -413,4 +410,32 @@ defmodule Realtime.Tenants.Connect do
   defp tenant_suspended?(_), do: :ok
 
   defp rebalance_check_interval_in_ms(), do: Application.fetch_env!(:realtime, :rebalance_check_interval_in_ms)
+
+  defp start_replication_connection(state) do
+    %{tenant: tenant} = state
+
+    with {:ok, replication_connection_pid} <- ReplicationConnection.start(tenant, self()) do
+      replication_connection_reference = Process.monitor(replication_connection_pid)
+
+      state = %{
+        state
+        | replication_connection_pid: replication_connection_pid,
+          replication_connection_reference: replication_connection_reference
+      }
+
+      {:ok, state}
+    else
+      {:error, :max_wal_senders_reached} ->
+        log_error("ReplicationMaxWalSendersReached", "Tenant database has reached the maximum number of WAL senders")
+        {:error, state}
+
+      {:error, error} ->
+        log_error("StartReplicationFailed", error)
+        {:error, state}
+    end
+  rescue
+    error ->
+      log_error("StartReplicationFailed", error)
+      {:error, state}
+  end
 end

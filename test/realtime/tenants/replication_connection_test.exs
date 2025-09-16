@@ -98,6 +98,7 @@ defmodule Realtime.Tenants.ReplicationConnectionTest do
 
         payload = %{
           "event" => "INSERT",
+          "meta" => %{"id" => row.id},
           "payload" => %{
             "id" => row.id,
             "value" => value
@@ -139,8 +140,9 @@ defmodule Realtime.Tenants.ReplicationConnectionTest do
                      "event" => "broadcast",
                      "payload" => %{
                        "event" => "INSERT",
+                       "meta" => %{"id" => id},
                        "payload" => %{
-                         "id" => _,
+                         "id" => id,
                          "value" => ^value
                        }
                      },
@@ -222,21 +224,26 @@ defmodule Realtime.Tenants.ReplicationConnectionTest do
           "payload" => %{"value" => "something"}
         })
 
+      fixture_id = fixture.id
+
       assert_receive {:socket_push, :text, data}, 500
       message = data |> IO.iodata_to_binary() |> Jason.decode!()
 
       assert %{
                "event" => "broadcast",
-               "payload" => %{"event" => "INSERT", "payload" => payload, "type" => "broadcast"},
+               "payload" => %{
+                 "event" => "INSERT",
+                 "meta" => %{"id" => ^fixture_id},
+                 "payload" => payload,
+                 "type" => "broadcast"
+               },
                "ref" => nil,
                "topic" => ^topic
              } = message
 
-      id = fixture.id
-
       assert payload == %{
                "value" => "something",
-               "id" => id
+               "id" => fixture_id
              }
     end
 
@@ -252,19 +259,25 @@ defmodule Realtime.Tenants.ReplicationConnectionTest do
 
       payload = %{"value" => "something", "id" => "123456"}
 
-      message_fixture(tenant, %{
-        "topic" => topic,
-        "private" => true,
-        "event" => "INSERT",
-        "payload" => payload
-      })
+      %{id: fixture_id} =
+        message_fixture(tenant, %{
+          "topic" => topic,
+          "private" => true,
+          "event" => "INSERT",
+          "payload" => payload
+        })
 
       assert_receive {:socket_push, :text, data}, 500
       message = data |> IO.iodata_to_binary() |> Jason.decode!()
 
       assert %{
                "event" => "broadcast",
-               "payload" => %{"event" => "INSERT", "payload" => ^payload, "type" => "broadcast"},
+               "payload" => %{
+                 "meta" => %{"id" => ^fixture_id},
+                 "event" => "INSERT",
+                 "payload" => ^payload,
+                 "type" => "broadcast"
+               },
                "ref" => nil,
                "topic" => ^topic
              } = message
@@ -330,6 +343,26 @@ defmodule Realtime.Tenants.ReplicationConnectionTest do
       assert_receive :ready, 5000
 
       assert {:error, :max_wal_senders_reached} = ReplicationConnection.start(tenant, self())
+    end
+
+    test "handles WAL pressure gracefully", %{tenant: tenant} do
+      {:ok, replication_pid} = ReplicationConnection.start(tenant, self())
+
+      {:ok, conn} = Database.connect(tenant, "realtime_test", :stop)
+      on_exit(fn -> Process.exit(conn, :normal) end)
+
+      large_payload = String.duplicate("x", 10 * 1024 * 1024)
+
+      for i <- 1..5 do
+        message_fixture_with_conn(tenant, conn, %{
+          "topic" => "stress_#{i}",
+          "private" => true,
+          "event" => "INSERT",
+          "payload" => %{"data" => large_payload}
+        })
+      end
+
+      assert Process.alive?(replication_pid)
     end
   end
 
@@ -408,5 +441,21 @@ defmodule Realtime.Tenants.ReplicationConnectionTest do
   defp assert_process_down(pid, timeout \\ 100) do
     ref = Process.monitor(pid)
     assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, timeout
+  end
+
+  defp message_fixture_with_conn(_tenant, conn, override) do
+    create_attrs = %{
+      "topic" => random_string(),
+      "extension" => "broadcast"
+    }
+
+    override = override |> Enum.map(fn {k, v} -> {"#{k}", v} end) |> Map.new()
+
+    {:ok, message} =
+      create_attrs
+      |> Map.merge(override)
+      |> TenantConnection.create_message(conn)
+
+    message
   end
 end
