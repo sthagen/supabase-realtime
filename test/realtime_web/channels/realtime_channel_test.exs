@@ -1,6 +1,5 @@
 defmodule RealtimeWeb.RealtimeChannelTest do
-  # Can't run async true because under the hood Cachex is used and it doesn't see Ecto Sandbox
-  use RealtimeWeb.ChannelCase, async: false
+  use RealtimeWeb.ChannelCase, async: true
   use Mimic
 
   import ExUnit.CaptureLog
@@ -23,17 +22,33 @@ defmodule RealtimeWeb.RealtimeChannelTest do
 
   setup do
     tenant = Containers.checkout_tenant(run_migrations: true)
+    Cachex.put!(Realtime.Tenants.Cache, {{:get_tenant_by_external_id, 1}, [tenant.external_id]}, {:cached, tenant})
     {:ok, tenant: tenant}
   end
 
   setup :rls_context
 
-  test "max heap size is set", %{tenant: tenant} do
+  test "max heap size is set for both transport and channel processes", %{tenant: tenant} do
     jwt = Generators.generate_jwt_token(tenant)
     {:ok, %Socket{} = socket} = connect(UserSocket, %{}, conn_opts(tenant, jwt))
 
     assert Process.info(socket.transport_pid, :max_heap_size) ==
              {:max_heap_size, %{error_logger: true, include_shared_binaries: false, kill: true, size: 6_250_000}}
+
+    assert {:ok, _, socket} = subscribe_and_join(socket, "realtime:test", %{})
+
+    assert Process.info(socket.channel_pid, :max_heap_size) ==
+             {:max_heap_size, %{error_logger: true, include_shared_binaries: false, kill: true, size: 6_250_000}}
+  end
+
+  # We don't test the socket because on unit tests Phoenix is not setting the fullsweep_after config
+  test "fullsweep_after is set on channel process", %{tenant: tenant} do
+    jwt = Generators.generate_jwt_token(tenant)
+    {:ok, %Socket{} = socket} = connect(UserSocket, %{}, conn_opts(tenant, jwt))
+
+    assert {:ok, _, socket} = subscribe_and_join(socket, "realtime:test", %{})
+
+    assert Process.info(socket.channel_pid, :fullsweep_after) == {:fullsweep_after, 20}
   end
 
   describe "broadcast" do
@@ -257,6 +272,35 @@ defmodule RealtimeWeb.RealtimeChannelTest do
 
       # presence_state
       assert Enum.sum(bucket) == 1
+    end
+
+    test "presence track closes on high payload size", %{tenant: tenant} do
+      topic = "realtime:test"
+      jwt = Generators.generate_jwt_token(tenant)
+      {:ok, %Socket{} = socket} = connect(UserSocket, %{"log_level" => "warning"}, conn_opts(tenant, jwt))
+
+      assert {:ok, _, %Socket{} = socket} = subscribe_and_join(socket, topic, %{})
+
+      assert_receive %Phoenix.Socket.Message{topic: "realtime:test", event: "presence_state"}, 500
+
+      payload = %{
+        type: "presence",
+        event: "TRACK",
+        payload: %{name: "realtime_presence_96", t: 1814.7000000029802, content: String.duplicate("a", 3_500_000)}
+      }
+
+      push(socket, "presence", payload)
+
+      assert_receive %Phoenix.Socket.Message{
+                       event: "system",
+                       payload: %{
+                         extension: "system",
+                         message: "Track message size exceeded",
+                         status: "error"
+                       },
+                       topic: ^topic
+                     },
+                     500
     end
   end
 
@@ -963,7 +1007,10 @@ defmodule RealtimeWeb.RealtimeChannelTest do
       put_in(extension, ["settings", "db_port"], db_port)
     ]
 
-    Realtime.Api.update_tenant(tenant, %{extensions: extensions})
+    with {:ok, tenant} <- Realtime.Api.update_tenant(tenant, %{extensions: extensions}) do
+      Cachex.put!(Realtime.Tenants.Cache, {{:get_tenant_by_external_id, 1}, [tenant.external_id]}, {:cached, tenant})
+      {:ok, tenant}
+    end
   end
 
   defp assert_process_down(pid) do

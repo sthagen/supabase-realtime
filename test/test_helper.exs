@@ -2,7 +2,7 @@ start_time = :os.system_time(:millisecond)
 
 alias Realtime.Api
 alias Realtime.Database
-ExUnit.start(exclude: [:failing], max_cases: 3, capture_log: true)
+ExUnit.start(exclude: [:failing], max_cases: 4, capture_log: true)
 
 max_cases = ExUnit.configuration()[:max_cases]
 
@@ -50,13 +50,14 @@ end_time = :os.system_time(:millisecond)
 IO.puts("[test_helper.exs] Time to start tests: #{end_time - start_time} ms")
 
 Mimic.copy(:syn)
+Mimic.copy(Extensions.PostgresCdcRls.Replications)
+Mimic.copy(Realtime.Database)
 Mimic.copy(Realtime.GenCounter)
 Mimic.copy(Realtime.Nodes)
 Mimic.copy(Realtime.RateCounter)
 Mimic.copy(Realtime.Tenants.Authorization)
 Mimic.copy(Realtime.Tenants.Cache)
 Mimic.copy(Realtime.Tenants.Connect)
-Mimic.copy(Realtime.Database)
 Mimic.copy(Realtime.Tenants.Migrations)
 Mimic.copy(Realtime.Tenants.Rebalancer)
 Mimic.copy(Realtime.Tenants.ReplicationConnection)
