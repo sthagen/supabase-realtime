@@ -2240,8 +2240,8 @@ defmodule Realtime.Integration.RtChannelTest do
       # 0 events as no broadcast used
       assert 2 = get_count([:realtime, :rate_counter, :channel, :joins], external_id)
       assert 2 = get_count([:realtime, :rate_counter, :channel, :presence_events], external_id)
-      # 5 + 5 + 5 (5 for each websocket and 5 while publishing)
-      assert 15 = get_count([:realtime, :rate_counter, :channel, :db_events], external_id)
+      # (5 for each websocket)
+      assert 10 = get_count([:realtime, :rate_counter, :channel, :db_events], external_id)
       assert 0 = get_count([:realtime, :rate_counter, :channel, :events], external_id)
     end
 
@@ -2295,8 +2295,9 @@ defmodule Realtime.Integration.RtChannelTest do
       assert_receive %Message{topic: ^topic, event: "phx_close"}, 500
     end
 
+    start_supervised!({Tracker, check_interval_in_ms: 100})
     # wait to trigger tracker
-    assert_process_down(socket, 5000)
+    assert_process_down(socket, 1000)
     assert [] = Tracker.list_pids()
   end
 
