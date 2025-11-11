@@ -71,9 +71,6 @@ defmodule Realtime.Extensions.PostgresCdcRls.ReplicationPollerTest do
                      },
                      500
 
-      # Wait for RateCounter to update
-      Process.sleep(1100)
-
       rate = Realtime.Tenants.db_events_per_second_rate(tenant)
 
       assert {:ok,
@@ -84,7 +81,7 @@ defmodule Realtime.Extensions.PostgresCdcRls.ReplicationPollerTest do
                   measurement: :avg,
                   triggered: false
                 }
-              }} = RateCounter.get(rate)
+              }} = RateCounterHelper.tick!(rate)
 
       assert sum == 0
     end
@@ -106,9 +103,10 @@ defmodule Realtime.Extensions.PostgresCdcRls.ReplicationPollerTest do
       # Broadcast to the whole cluster due to missing node information
       expect(TenantBroadcaster, :pubsub_broadcast, fn ^tenant_id,
                                                       "realtime:postgres:" <> ^tenant_id,
-                                                      {"INSERT", @change_json, _sub_ids},
+                                                      {"INSERT", change_json, _sub_ids},
                                                       MessageDispatcher,
                                                       :postgres_changes ->
+        assert Jason.decode!(change_json) == Jason.decode!(@change_json)
         :ok
       end)
 
@@ -132,11 +130,8 @@ defmodule Realtime.Extensions.PostgresCdcRls.ReplicationPollerTest do
                      },
                      500
 
-      # Wait for RateCounter to update
-      Process.sleep(1100)
-
       rate = Realtime.Tenants.db_events_per_second_rate(tenant)
-      assert {:ok, %RateCounter{sum: sum}} = RateCounter.get(rate)
+      assert {:ok, %RateCounter{sum: sum}} = RateCounterHelper.tick!(rate)
       assert sum == 2
     end
 
@@ -155,9 +150,10 @@ defmodule Realtime.Extensions.PostgresCdcRls.ReplicationPollerTest do
       # Broadcast to the whole cluster due to missing node information
       expect(TenantBroadcaster, :pubsub_broadcast, fn ^tenant_id,
                                                       "realtime:postgres:" <> ^tenant_id,
-                                                      {"INSERT", @change_json, _sub_ids},
+                                                      {"INSERT", change_json, _sub_ids},
                                                       MessageDispatcher,
                                                       :postgres_changes ->
+        assert Jason.decode!(change_json) == Jason.decode!(@change_json)
         :ok
       end)
 
@@ -181,11 +177,8 @@ defmodule Realtime.Extensions.PostgresCdcRls.ReplicationPollerTest do
                      },
                      500
 
-      # Wait for RateCounter to update
-      Process.sleep(1100)
-
       rate = Realtime.Tenants.db_events_per_second_rate(tenant)
-      assert {:ok, %RateCounter{sum: sum}} = RateCounter.get(rate)
+      assert {:ok, %RateCounter{sum: sum}} = RateCounterHelper.tick!(rate)
       assert sum == 2
     end
 
@@ -207,9 +200,10 @@ defmodule Realtime.Extensions.PostgresCdcRls.ReplicationPollerTest do
       # Broadcast to the whole cluster due to missing node information
       expect(TenantBroadcaster, :pubsub_broadcast, fn ^tenant_id,
                                                       "realtime:postgres:" <> ^tenant_id,
-                                                      {"INSERT", @change_json, _sub_ids},
+                                                      {"INSERT", change_json, _sub_ids},
                                                       MessageDispatcher,
                                                       :postgres_changes ->
+        assert Jason.decode!(change_json) == Jason.decode!(@change_json)
         :ok
       end)
 
@@ -233,11 +227,8 @@ defmodule Realtime.Extensions.PostgresCdcRls.ReplicationPollerTest do
                      },
                      500
 
-      # Wait for RateCounter to update
-      Process.sleep(1100)
-
       rate = Realtime.Tenants.db_events_per_second_rate(tenant)
-      assert {:ok, %RateCounter{sum: sum}} = RateCounter.get(rate)
+      assert {:ok, %RateCounter{sum: sum}} = RateCounterHelper.tick!(rate)
       assert sum == 2
     end
 
@@ -263,7 +254,8 @@ defmodule Realtime.Extensions.PostgresCdcRls.ReplicationPollerTest do
 
       # # Broadcast to the exact nodes only
       expect(TenantBroadcaster, :pubsub_direct_broadcast, 2, fn
-        _node, ^tenant_id, ^topic, {"INSERT", @change_json, _sub_ids}, MessageDispatcher, :postgres_changes ->
+        _node, ^tenant_id, ^topic, {"INSERT", change_json, _sub_ids}, MessageDispatcher, :postgres_changes ->
+          assert Jason.decode!(change_json) == Jason.decode!(@change_json)
           :ok
       end)
 
@@ -291,16 +283,13 @@ defmodule Realtime.Extensions.PostgresCdcRls.ReplicationPollerTest do
 
       assert Enum.count(calls) == 2
 
-      node_subs = Enum.map(calls, fn [node, _, _, {"INSERT", @change_json, sub_ids}, _, _] -> {node, sub_ids} end)
+      node_subs = Enum.map(calls, fn [node, _, _, {"INSERT", _change_json, sub_ids}, _, _] -> {node, sub_ids} end)
 
       assert {node(), MapSet.new([sub1, sub3])} in node_subs
       assert {:"someothernode@127.0.0.1", MapSet.new([sub2])} in node_subs
 
-      # Wait for RateCounter to update
-      Process.sleep(1100)
-
       rate = Realtime.Tenants.db_events_per_second_rate(tenant)
-      assert {:ok, %RateCounter{sum: sum}} = RateCounter.get(rate)
+      assert {:ok, %RateCounter{sum: sum}} = RateCounterHelper.tick!(rate)
       assert sum == 3
     end
   end
