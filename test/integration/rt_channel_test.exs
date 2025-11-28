@@ -1623,9 +1623,8 @@ defmodule Realtime.Integration.RtChannelTest do
 
       assert_receive %Message{event: "phx_reply", payload: %{"status" => "ok"}}, 500
       assert_receive %Message{event: "presence_state"}, 500
-      tenant = Tenants.get_tenant_by_external_id(tenant.external_id)
-      Realtime.Api.update_tenant(tenant, %{jwt_jwks: %{keys: ["potato"]}})
 
+      Realtime.Api.update_tenant_by_external_id(tenant.external_id, %{jwt_jwks: %{keys: ["potato"]}})
       assert_process_down(socket)
     end
 
@@ -1643,9 +1642,7 @@ defmodule Realtime.Integration.RtChannelTest do
       assert_receive %Message{event: "phx_reply", payload: %{"status" => "ok"}}, 500
       assert_receive %Message{event: "presence_state"}, 500
 
-      tenant = Tenants.get_tenant_by_external_id(tenant.external_id)
-      Realtime.Api.update_tenant(tenant, %{jwt_secret: "potato"})
-
+      Realtime.Api.update_tenant_by_external_id(tenant.external_id, %{jwt_secret: "potato"})
       assert_process_down(socket)
     end
 
@@ -1663,9 +1660,7 @@ defmodule Realtime.Integration.RtChannelTest do
       assert_receive %Message{event: "phx_reply", payload: %{"status" => "ok"}}, 500
       assert_receive %Message{event: "presence_state"}, 500
 
-      tenant = Tenants.get_tenant_by_external_id(tenant.external_id)
-      Realtime.Api.update_tenant(tenant, %{private_only: true})
-
+      Realtime.Api.update_tenant_by_external_id(tenant.external_id, %{private_only: true})
       assert_process_down(socket)
     end
 
@@ -1683,8 +1678,7 @@ defmodule Realtime.Integration.RtChannelTest do
       assert_receive %Message{event: "phx_reply", payload: %{"status" => "ok"}}, 500
       assert_receive %Message{event: "presence_state"}, 500
 
-      tenant = Tenants.get_tenant_by_external_id(tenant.external_id)
-      Realtime.Api.update_tenant(tenant, %{max_concurrent_users: 100})
+      Realtime.Api.update_tenant_by_external_id(tenant.external_id, %{max_concurrent_users: 100})
 
       refute_receive %Message{
                        topic: ^realtime_topic,
@@ -2033,19 +2027,19 @@ defmodule Realtime.Integration.RtChannelTest do
 
     test "broadcast events", %{tenant: tenant, serializer: serializer} do
       external_id = tenant.external_id
-      {socket, _} = get_connection(tenant, serializer)
+      {socket1, _} = get_connection(tenant, serializer)
       config = %{broadcast: %{self: true}}
       topic = "realtime:any"
 
-      WebsocketClient.join(socket, topic, %{config: config})
+      WebsocketClient.join(socket1, topic, %{config: config})
 
       # Join events
       assert_receive %Message{event: "phx_reply", payload: %{"status" => "ok"}, topic: ^topic}, 300
       assert_receive %Message{topic: ^topic, event: "presence_state"}
 
       # Add second client so we can test the "multiplication" of billable events
-      {socket, _} = get_connection(tenant, serializer)
-      WebsocketClient.join(socket, topic, %{config: config})
+      {socket2, _} = get_connection(tenant, serializer)
+      WebsocketClient.join(socket2, topic, %{config: config})
 
       # Join events
       assert_receive %Message{event: "phx_reply", payload: %{"status" => "ok"}, topic: ^topic}, 300
@@ -2055,9 +2049,13 @@ defmodule Realtime.Integration.RtChannelTest do
       payload = %{"event" => "TEST", "payload" => %{"msg" => 1}, "type" => "broadcast"}
 
       for _ <- 1..5 do
-        WebsocketClient.send_event(socket, topic, "broadcast", payload)
+        WebsocketClient.send_event(socket1, topic, "broadcast", payload)
+        # both sockets
+        assert_receive %Message{topic: ^topic, event: "broadcast", payload: ^payload}
         assert_receive %Message{topic: ^topic, event: "broadcast", payload: ^payload}
       end
+
+      refute_receive _any
 
       # Wait for RateCounter to run
       RateCounterHelper.tick_tenant_rate_counters!(tenant.external_id)

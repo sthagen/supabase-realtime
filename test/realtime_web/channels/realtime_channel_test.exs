@@ -519,6 +519,40 @@ defmodule RealtimeWeb.RealtimeChannelTest do
                      },
                      500
     end
+
+    test "presence track with same payload does nothing", %{tenant: tenant} do
+      topic = "realtime:test"
+      jwt = Generators.generate_jwt_token(tenant)
+      {:ok, %Socket{} = socket} = connect(UserSocket, %{"log_level" => "warning"}, conn_opts(tenant, jwt))
+
+      assert {:ok, _, %Socket{} = socket} =
+               subscribe_and_join(socket, topic, %{config: %{presence: %{enabled: true, key: "my_key"}}})
+
+      assert_receive %Phoenix.Socket.Message{topic: "realtime:test", event: "presence_state"}, 500
+
+      payload = %{type: "presence", event: "TRACK", payload: %{"hello" => "world"}}
+
+      push(socket, "presence", payload)
+
+      assert_receive %Socket.Reply{payload: %{}, topic: "realtime:test", status: :ok}, 500
+
+      assert_receive %Socket.Message{
+                       payload: %{
+                         joins: %{"my_key" => %{metas: [%{:phx_ref => _, "hello" => "world"}]}},
+                         leaves: %{}
+                       },
+                       topic: "realtime:test",
+                       event: "presence_diff"
+                     },
+                     500
+
+      push(socket, "presence", payload)
+
+      assert_receive %Socket.Reply{payload: %{}, topic: "realtime:test", status: :ok}, 500
+      # no presence_diff this time
+
+      refute_receive _any
+    end
   end
 
   describe "unexpected errors" do
@@ -1224,7 +1258,7 @@ defmodule RealtimeWeb.RealtimeChannelTest do
       put_in(extension, ["settings", "db_port"], db_port)
     ]
 
-    with {:ok, tenant} <- Realtime.Api.update_tenant(tenant, %{extensions: extensions}) do
+    with {:ok, tenant} <- Realtime.Api.update_tenant_by_external_id(tenant.external_id, %{extensions: extensions}) do
       Cachex.put!(Realtime.Tenants.Cache, {{:get_tenant_by_external_id, 1}, [tenant.external_id]}, {:cached, tenant})
       {:ok, tenant}
     end
