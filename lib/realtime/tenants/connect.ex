@@ -38,6 +38,14 @@ defmodule Realtime.Tenants.Connect do
             connected_users_bucket: [1],
             check_connect_region_interval: nil
 
+  @tenant_id_spec [{{:"$1", :_, :_, :_, :_, :_}, [], [:"$1"]}]
+  @spec list_tenants() :: [binary]
+  def list_tenants() do
+    :syn_registry_by_name
+    |> :syn_backbone.get_table_name(__MODULE__)
+    |> :ets.select(@tenant_id_spec)
+  end
+
   @doc "Check if Connect has finished setting up connections"
   def ready?(tenant_id) do
     case whereis(tenant_id) do
@@ -380,7 +388,6 @@ defmodule Realtime.Tenants.Connect do
   @impl true
   def terminate(reason, %{tenant_id: tenant_id}) do
     Logger.info("Tenant #{tenant_id} has been terminated: #{inspect(reason)}")
-    Realtime.MetricsCleaner.delete_metric(tenant_id)
     :ok
   end
 
