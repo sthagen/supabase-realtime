@@ -1957,13 +1957,27 @@ defmodule Realtime.Integration.RtChannelTest do
     refute_receive %Message{event: "presence_state"}
   end
 
-  def handle_telemetry(event, %{sum: sum}, metadata, name) do
+  def handle_telemetry(event, measurements, metadata, name) do
     tenant = metadata[:tenant]
     [key] = Enum.take(event, -1)
+    value = Map.get(measurements, :sum) || Map.get(measurements, :value) || Map.get(measurements, :size) || 0
 
     Agent.update(name, fn state ->
-      state = Map.put_new(state, tenant, %{joins: 0, events: 0, db_events: 0, presence_events: 0})
-      update_in(state, [metadata[:tenant], key], fn v -> (v || 0) + sum end)
+      state =
+        Map.put_new(
+          state,
+          tenant,
+          %{
+            joins: 0,
+            events: 0,
+            db_events: 0,
+            presence_events: 0,
+            output_bytes: 0,
+            input_bytes: 0
+          }
+        )
+
+      update_in(state, [metadata[:tenant], key], fn v -> (v || 0) + value end)
     end)
   end
 
@@ -2149,7 +2163,7 @@ defmodule Realtime.Integration.RtChannelTest do
       # Postgres Change events
       for _ <- 1..5, do: Postgrex.query!(conn, "insert into test (details) values ('test')", [])
 
-      for _ <- 1..5 do
+      for _ <- 1..10 do
         assert_receive %Message{
                          topic: ^topic,
                          event: "postgres_changes",

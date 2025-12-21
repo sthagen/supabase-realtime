@@ -4,40 +4,69 @@ defmodule RealtimeWeb.MetricsController do
   alias Realtime.PromEx
   alias Realtime.GenRpc
 
+  # We give more memory and time to collect metrics from all nodes as this is a lot of work
   def index(conn, _) do
-    timeout = Application.fetch_env!(:realtime, :metrics_rpc_timeout)
+    conn =
+      conn
+      |> put_resp_content_type("text/plain")
+      |> send_chunked(200)
 
-    cluster_metrics =
-      Node.list()
-      |> Task.async_stream(
-        fn node ->
-          {node, GenRpc.call(node, PromEx, :get_compressed_metrics, [], timeout: timeout)}
-        end,
-        timeout: :infinity
-      )
-      |> Enum.reduce([PromEx.get_metrics()], fn {_, {node, response}}, acc ->
-        case response do
-          {:error, :rpc_error, reason} ->
-            Logger.error("Cannot fetch metrics from the node #{inspect(node)} because #{inspect(reason)}")
-            acc
-
-          metrics ->
-            [uncompress(metrics) | acc]
-        end
-      end)
-      |> Enum.reverse()
+    {time, conn} = :timer.tc(fn -> metrics([Node.self() | Node.list()], conn) end, :millisecond)
+    Logger.info("Collected cluster metrics in #{time} milliseconds")
 
     conn
-    |> put_resp_content_type("text/plain")
-    |> send_resp(200, cluster_metrics)
   end
 
-  defp uncompress(compressed_data) do
-    :zlib.uncompress(compressed_data)
-  rescue
-    error ->
-      Logger.error("Failed to decompress metrics data: #{inspect(error)}")
-      # Return empty string to not impact the aggregated metrics
-      ""
+  def region(conn, %{"region" => region}) do
+    conn =
+      conn
+      |> put_resp_content_type("text/plain")
+      |> send_chunked(200)
+
+    nodes = Realtime.Nodes.region_nodes(region)
+
+    {time, conn} = :timer.tc(fn -> metrics(nodes, conn) end, :millisecond)
+    Logger.info("Collected metrics for region #{region} in #{time} milliseconds")
+
+    conn
+  end
+
+  defp metrics(nodes, conn) do
+    bump_max_heap_size()
+    timeout = Application.fetch_env!(:realtime, :metrics_rpc_timeout)
+
+    nodes
+    |> Task.async_stream(
+      fn node ->
+        {node, GenRpc.call(node, __MODULE__, :get_metrics, [], timeout: timeout)}
+      end,
+      timeout: :infinity
+    )
+    |> Enum.reduce(conn, fn {_, {node, response}}, acc_conn ->
+      case response do
+        {:error, :rpc_error, reason} ->
+          Logger.error("Cannot fetch metrics from the node #{inspect(node)} because #{inspect(reason)}")
+          acc_conn
+
+        metrics ->
+          {:ok, acc_conn} = chunk(acc_conn, metrics)
+          :erlang.garbage_collect()
+          acc_conn
+      end
+    end)
+  end
+
+  def get_metrics() do
+    bump_max_heap_size()
+    PromEx.get_metrics()
+  end
+
+  defp bump_max_heap_size() do
+    system_max_heap_size = :erlang.system_info(:max_heap_size)[:size]
+
+    # it's 0 when there is no limit
+    if is_integer(system_max_heap_size) and system_max_heap_size > 0 do
+      Process.flag(:max_heap_size, system_max_heap_size * 3)
+    end
   end
 end

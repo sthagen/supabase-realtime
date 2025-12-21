@@ -66,14 +66,14 @@ defmodule Realtime.PromEx do
 
   defmodule Store do
     @moduledoc false
-    # Custom store to set global tags and striped storage
+    # Custom store to set global tags
 
     @behaviour PromEx.Storage
 
     @impl true
     def scrape(name) do
       Peep.get_all_metrics(name)
-      |> Peep.Prometheus.export()
+      |> Realtime.Monitoring.Prometheus.export()
     end
 
     @impl true
@@ -82,7 +82,7 @@ defmodule Realtime.PromEx do
         name: name,
         metrics: metrics,
         global_tags: Application.get_env(:realtime, :metrics_tags, %{}),
-        storage: :striped
+        storage: {:default, 4}
       )
     end
   end
@@ -133,12 +133,5 @@ defmodule Realtime.PromEx do
     |> PromEx.ETSCronFlusher.defer_ets_flush()
 
     metrics
-  end
-
-  @doc "Compressed metrics using :zlib.compress/1"
-  @spec get_compressed_metrics() :: binary()
-  def get_compressed_metrics do
-    get_metrics()
-    |> :zlib.compress()
   end
 end
