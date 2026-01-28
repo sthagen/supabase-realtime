@@ -34,6 +34,7 @@ queue_interval = Env.get_integer("DB_QUEUE_INTERVAL", 5000)
 pool_size = Env.get_integer("DB_POOL_SIZE", 5)
 master_region = System.get_env("DB_MASTER_REGION")
 region = System.get_env("REGION")
+region_mapping = System.get_env("REGION_MAPPING")
 
 after_connect_query_args =
   case System.get_env("DB_AFTER_CONNECT_QUERY") do
@@ -142,6 +143,7 @@ config :realtime,
   postgres_cdc_scope_shards: postgres_cdc_scope_shards,
   regional_broadcasting: regional_broadcasting,
   master_region: master_region,
+  region_mapping: region_mapping,
   metrics_tags: metrics_tags,
   measure_traffic_interval_in_ms: measure_traffic_interval_in_ms,
   disable_healthcheck_logging: disable_healthcheck_logging
@@ -339,10 +341,31 @@ if config_env() == :prod do
     Realtime.Repo.Replica.Local => default_db_host
   }
 
+  # Legacy repos
   # username, password, database, and port must match primary credentials
   for {replica_repo, hostname} <- replica_repos do
     config :realtime, replica_repo,
       hostname: hostname,
+      username: username,
+      password: password,
+      database: database,
+      port: port,
+      pool_size: System.get_env("DB_REPLICA_POOL_SIZE", "5") |> String.to_integer(),
+      queue_target: queue_target,
+      queue_interval: queue_interval,
+      parameters: [
+        application_name: "supabase_mt_realtime_ro"
+      ],
+      socket_options: socket_options,
+      ssl: ssl_opts
+  end
+
+  # New main replica repo
+  replica_host = System.get_env("DB_REPLICA_HOST")
+
+  if replica_host do
+    config :realtime, Realtime.Repo.Replica,
+      hostname: replica_host,
       username: username,
       password: password,
       database: database,
