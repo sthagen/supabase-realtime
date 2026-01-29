@@ -55,6 +55,7 @@ connect_partition_slots = Env.get_integer("CONNECT_PARTITION_SLOTS", System.sche
 metrics_cleaner_schedule_timer_in_ms = Env.get_integer("METRICS_CLEANER_SCHEDULE_TIMER_IN_MS", :timer.minutes(30))
 metrics_rpc_timeout_in_ms = Env.get_integer("METRICS_RPC_TIMEOUT_IN_MS", :timer.seconds(15))
 rebalance_check_interval_in_ms = Env.get_integer("REBALANCE_CHECK_INTERVAL_IN_MS", :timer.minutes(10))
+node_balance_uptime_threshold_in_ms = Env.get_integer("NODE_BALANCE_UPTIME_THRESHOLD_IN_MS", :timer.minutes(5))
 tenant_max_bytes_per_second = Env.get_integer("TENANT_MAX_BYTES_PER_SECOND", 100_000)
 tenant_max_channels_per_client = Env.get_integer("TENANT_MAX_CHANNELS_PER_CLIENT", 100)
 tenant_max_concurrent_users = Env.get_integer("TENANT_MAX_CONCURRENT_USERS", 200)
@@ -134,7 +135,6 @@ config :realtime,
   metrics_rpc_timeout: metrics_rpc_timeout_in_ms,
   tenant_cache_expiration: tenant_cache_expiration,
   rpc_timeout: rpc_timeout,
-  max_gen_rpc_clients: max_gen_rpc_clients,
   no_channel_timeout_in_ms: no_channel_timeout_in_ms,
   platform: platform,
   pubsub_adapter: pubsub_adapter,
@@ -298,13 +298,15 @@ if config_env() != :test do
     db_enc_key: System.get_env("DB_ENC_KEY"),
     region: region,
     prom_poll_rate: Env.get_integer("PROM_POLL_RATE", 5000),
-    slot_name_suffix: slot_name_suffix
+    slot_name_suffix: slot_name_suffix,
+    max_gen_rpc_clients: max_gen_rpc_clients
 end
 
 # Setup Production
 
 if config_env() == :prod do
   config :libcluster, debug: false, topologies: cluster_topologies
+  config :realtime, node_balance_uptime_threshold_in_ms: node_balance_uptime_threshold_in_ms
   secret_key_base = System.fetch_env!("SECRET_KEY_BASE")
   if app_name == "", do: raise("APP_NAME not available")
 

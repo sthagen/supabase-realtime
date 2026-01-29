@@ -12,7 +12,8 @@ import Config
 presence = System.get_env("PRESENCE", "false") == "false"
 
 config :realtime,
-  presence: presence
+  presence: presence,
+  node_balance_uptime_threshold_in_ms: 100
 
 config :realtime, RealtimeWeb.Endpoint,
   http: [port: System.get_env("PORT", "4000"), compress: true],
