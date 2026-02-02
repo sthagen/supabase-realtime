@@ -1,7 +1,7 @@
 services:
   # Supabase Realtime service
   test_db:
-    image: supabase/postgres:14.1.0.105
+    image: supabase/postgres:17.6.1.074
     container_name: test-realtime-db
     ports:
       - "5532:5432"
@@ -29,7 +29,7 @@ services:
       PORT: 4100
       DB_HOST: host.docker.internal
       DB_PORT: 5532
-      DB_USER: postgres
+      DB_USER: supabase_admin
       DB_PASSWORD: postgres
       DB_NAME: postgres
       DB_ENC_KEY: 1234567890123456
@@ -37,7 +37,6 @@ services:
       API_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
       SECRET_KEY_BASE: UpNVntn3cDxHJpq99YMc1T1AQgQpc8kfYTuRgBiYa15BLrx8etQoXz3gZv1/u2oq
       ERL_AFLAGS: -proto_dist inet_tcp
-      RLIMIT_NOFILE: 1000000
       DNS_NODES: "''"
       APP_NAME: realtime
       RUN_JANITOR: true
