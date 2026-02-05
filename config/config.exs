@@ -10,7 +10,9 @@ import Config
 config :realtime,
   websocket_fullsweep_after: 20,
   ecto_repos: [Realtime.Repo],
-  version: Mix.Project.config()[:version]
+  version: Mix.Project.config()[:version],
+  replication_watchdog_interval: :timer.minutes(5),
+  replication_watchdog_timeout: :timer.minutes(1)
 
 # Configures the endpoint
 config :realtime, RealtimeWeb.Endpoint,
@@ -82,6 +84,7 @@ config :gen_rpc,
   async_call_inactivity_timeout: 300_000
 
 config :prom_ex, :storage_adapter, Realtime.PromEx.Store
+config :realtime, Realtime.PromEx, ets_flush_interval: 90_000
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
