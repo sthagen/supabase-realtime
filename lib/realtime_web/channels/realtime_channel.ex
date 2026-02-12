@@ -52,11 +52,18 @@ defmodule RealtimeWeb.RealtimeChannel do
     Logger.metadata(external_id: tenant_id, project: tenant_id)
     Logger.put_process_level(self(), log_level)
 
+    presence_enabled? =
+      case get_in(params, ["config", "presence", "enabled"]) do
+        enabled when is_boolean(enabled) -> enabled
+        _ -> true
+      end
+
     socket =
       socket
       |> assign_access_token(params)
       |> assign(:private?, !!params["config"]["private"])
       |> assign(:policies, nil)
+      |> assign(:presence_enabled?, presence_enabled?)
 
     case Join.validate(params) do
       {:ok, _join} ->
@@ -97,12 +104,7 @@ defmodule RealtimeWeb.RealtimeChannel do
       Phoenix.PubSub.subscribe(Realtime.PubSub, "realtime:operations:" <> tenant_id)
 
       is_new_api = new_api?(params)
-      # TODO: Default will be moved to false in the future
-      presence_enabled? =
-        case get_in(params, ["config", "presence", "enabled"]) do
-          enabled when is_boolean(enabled) -> enabled
-          _ -> true
-        end
+      presence_enabled? = socket.assigns.presence_enabled?
 
       pg_change_params = pg_change_params(is_new_api, params, channel_pid, claims, sub_topic)
 
@@ -587,12 +589,24 @@ defmodule RealtimeWeb.RealtimeChannel do
     assign(socket, :presence_rate_counter, rate_args)
   end
 
-  defp assign_client_presence_rate_limit(socket, _tenant) do
+  defp assign_client_presence_rate_limit(socket, tenant) do
     config = Application.get_env(:realtime, :client_presence_rate_limit, max_calls: 5, window_ms: 30_000)
 
+    max_calls =
+      case tenant.max_client_presence_events_per_window do
+        value when is_integer(value) and value > 0 -> value
+        _ -> config[:max_calls]
+      end
+
+    window_ms =
+      case tenant.client_presence_window_ms do
+        value when is_integer(value) and value > 0 -> value
+        _ -> config[:window_ms]
+      end
+
     client_rate_limit = %{
-      max_calls: config[:max_calls],
-      window_ms: config[:window_ms],
+      max_calls: max_calls,
+      window_ms: window_ms,
       counter: 0,
       reset_at: nil
     }
@@ -792,8 +806,12 @@ defmodule RealtimeWeb.RealtimeChannel do
        when not is_nil(topic) do
     authorization_context = socket.assigns.authorization_context
     policies = socket.assigns.policies || %Policies{}
+    presence_enabled? = socket.assigns.presence_enabled?
 
-    with {:ok, policies} <- Authorization.get_read_authorizations(policies, db_conn, authorization_context) do
+    with {:ok, policies} <-
+           Authorization.get_read_authorizations(policies, db_conn, authorization_context,
+             presence_enabled?: presence_enabled?
+           ) do
       socket = assign(socket, :policies, policies)
 
       if match?(%Policies{broadcast: %BroadcastPolicies{read: false}}, socket.assigns.policies),
