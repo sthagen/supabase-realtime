@@ -43,6 +43,7 @@ defmodule RealtimeWeb.Router do
 
   pipeline :metrics do
     plug(:check_auth, [:metrics_jwt_secret, :metrics_blocklist])
+    plug(RealtimeWeb.Plugs.MetricsMode)
   end
 
   pipeline :openapi do
@@ -76,9 +77,14 @@ defmodule RealtimeWeb.Router do
     pipe_through(:metrics)
 
     get("/", MetricsController, :index)
-    get("/tenant", MetricsController, :tenant)
     get("/:region", MetricsController, :region)
-    get("/:region/tenant", MetricsController, :region_tenant)
+  end
+
+  scope "/tenant-metrics", RealtimeWeb do
+    pipe_through(:metrics)
+
+    get("/", MetricsController, :tenant)
+    get("/:region", MetricsController, :region_tenant)
   end
 
   scope "/api" do
