@@ -88,6 +88,7 @@ measure_traffic_interval_in_ms = Env.get_integer("MEASURE_TRAFFIC_INTERVAL_IN_MS
 metrics_pusher_enabled = Env.get_boolean("METRICS_PUSHER_ENABLED", false)
 metrics_separation_enabled = Env.get_boolean("METRICS_SEPARATION_ENABLED", false)
 metrics_pusher_url = System.get_env("METRICS_PUSHER_URL")
+metrics_pusher_user = System.get_env("METRICS_PUSHER_USER", "realtime")
 metrics_pusher_auth = System.get_env("METRICS_PUSHER_AUTH")
 metrics_pusher_interval_ms = Env.get_integer("METRICS_PUSHER_INTERVAL_MS", :timer.seconds(30))
 metrics_pusher_timeout_ms = Env.get_integer("METRICS_PUSHER_TIMEOUT_MS", :timer.seconds(15))
@@ -168,6 +169,7 @@ config :realtime,
   disable_healthcheck_logging: disable_healthcheck_logging,
   metrics_pusher_enabled: metrics_pusher_enabled,
   metrics_pusher_url: metrics_pusher_url,
+  metrics_pusher_user: metrics_pusher_user,
   metrics_pusher_auth: metrics_pusher_auth,
   metrics_pusher_interval_ms: metrics_pusher_interval_ms,
   metrics_pusher_timeout_ms: metrics_pusher_timeout_ms,
@@ -320,7 +322,7 @@ if config_env() != :test do
     api_jwt_secret: System.get_env("API_JWT_SECRET"),
     api_blocklist: System.get_env("API_TOKEN_BLOCKLIST", "") |> String.split(","),
     metrics_blocklist: System.get_env("METRICS_TOKEN_BLOCKLIST", "") |> String.split(","),
-    metrics_jwt_secret: System.get_env("METRICS_JWT_SECRET"),
+    metrics_jwt_secret: System.fetch_env!("METRICS_JWT_SECRET"),
     db_enc_key: System.get_env("DB_ENC_KEY"),
     region: region,
     prom_poll_rate: Env.get_integer("PROM_POLL_RATE", 5000),
