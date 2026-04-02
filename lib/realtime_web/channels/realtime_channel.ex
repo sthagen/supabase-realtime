@@ -161,8 +161,7 @@ defmodule RealtimeWeb.RealtimeChannel do
         log_error(socket, "Unauthorized", msg)
 
       {:error, :too_many_channels} ->
-        msg = "Too many channels"
-        log_error(socket, "ChannelRateLimitReached", msg)
+        {:error, %{reason: "ChannelRateLimitReached: Too many channels"}}
 
       {:error, :too_many_connections} ->
         msg = "Too many connected users"
@@ -563,14 +562,22 @@ defmodule RealtimeWeb.RealtimeChannel do
     end
   end
 
-  def limit_channels(tenant, %{transport_pid: pid}) do
+  def limit_channels(tenant, %{transport_pid: pid} = socket) do
     key = Tenants.channels_per_client_key(tenant)
+    count = Registry.count_match(Realtime.Registry, key, pid)
 
-    if Registry.count_match(Realtime.Registry, key, pid) + 1 > tenant.max_channels_per_client do
-      {:error, :too_many_channels}
-    else
-      Registry.register(Realtime.Registry, Tenants.channels_per_client_key(tenant), pid)
-      :ok
+    cond do
+      count >= tenant.max_channels_per_client ->
+        {:error, :too_many_channels}
+
+      count + 1 == tenant.max_channels_per_client ->
+        Registry.register(Realtime.Registry, key, pid)
+        log_error(socket, "ChannelRateLimitReached", "Too many channels")
+        :ok
+
+      true ->
+        Registry.register(Realtime.Registry, key, pid)
+        :ok
     end
   end
 
@@ -882,5 +889,5 @@ defmodule RealtimeWeb.RealtimeChannel do
     client_enabled? || tenant_enabled
   end
 
-  defp max_heap_size(), do: Application.fetch_env!(:realtime, :websocket_max_heap_size)
+  defp max_heap_size(), do: :persistent_term.get({RealtimeWeb.UserSocket, :websocket_max_heap_size})
 end
