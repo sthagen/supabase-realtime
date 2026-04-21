@@ -4,7 +4,7 @@ defmodule Realtime.MixProject do
   def project do
     [
       app: :realtime,
-      version: "2.85.2",
+      version: "2.86.3",
       elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
@@ -58,6 +58,7 @@ defmodule Realtime.MixProject do
       {:ecto_sql, "~> 3.11"},
       {:ecto_psql_extras, "~> 0.8"},
       {:postgrex, "~> 0.21.0"},
+      {:db_connection, github: "elixir-ecto/db_connection", branch: "master", override: true},
       {:phoenix_html, "~> 3.2"},
       {:phoenix_live_view, "~> 0.18"},
       {:phoenix_live_reload, "~> 1.2", only: :dev},
@@ -121,20 +122,16 @@ defmodule Realtime.MixProject do
   defp aliases do
     [
       setup: ["deps.get", "ecto.setup", "cmd npm install --prefix assets"],
-      "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/dev_seeds.exs"],
+      "ecto.setup": ["ecto.create", "ecto.migrate", "seed"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
-      test: [
+      seed: ["run priv/repo/dev_seeds.exs"],
+      "test.setup": [
         "cmd epmd -daemon",
         "ecto.create --quiet",
-        "ecto.migrate --migrations-path=priv/repo/migrations",
-        "test"
+        "ecto.migrate"
       ],
-      "test.partitioned": [
-        "cmd epmd -daemon",
-        "ecto.create --quiet",
-        "ecto.migrate --migrations-path=priv/repo/migrations",
-        "test --partitions 4"
-      ],
+      test: ["test.setup", "test"],
+      "test.partitioned": ["test.setup", "test --partitions 4"],
       "assets.deploy": ["esbuild default --minify", "tailwind default --minify", "phx.digest"]
     ]
   end
