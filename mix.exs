@@ -4,7 +4,7 @@ defmodule Realtime.MixProject do
   def project do
     [
       app: :realtime,
-      version: "2.87.0",
+      version: "2.88.1",
       elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
@@ -70,7 +70,7 @@ defmodule Realtime.MixProject do
       {:telemetry_poller, "~> 1.0"},
       {:gettext, "~> 0.19"},
       {:jason, "~> 1.3"},
-      {:plug_cowboy, "~> 2.6"},
+      {:plug_cowboy, "~> 2.8"},
       {:libcluster, "~> 3.3"},
       {:libcluster_postgres, "~> 0.2"},
       {:uuid, "~> 1.1"},
