@@ -90,7 +90,7 @@ defmodule RealtimeWeb.TenantControllerTest do
 
       assert Crypto.encrypt!("127.0.0.1") == settings["db_host"]
       assert Crypto.encrypt!("postgres") == settings["db_name"]
-      assert Crypto.encrypt!("supabase_admin") == settings["db_user"]
+      assert Crypto.encrypt!("supabase_realtime_admin") == settings["db_user"]
       refute settings["db_password"]
       Process.sleep(100)
 
@@ -119,7 +119,7 @@ defmodule RealtimeWeb.TenantControllerTest do
 
       assert Crypto.encrypt!("127.0.0.1") == settings["db_host"]
       assert Crypto.encrypt!("postgres") == settings["db_name"]
-      assert Crypto.encrypt!("supabase_admin") == settings["db_user"]
+      assert Crypto.encrypt!("supabase_realtime_admin") == settings["db_user"]
       refute settings["db_password"]
       Process.sleep(100)
       %{extensions: [%{settings: settings}]} = tenant = Tenants.get_tenant_by_external_id(external_id)
@@ -572,7 +572,7 @@ defmodule RealtimeWeb.TenantControllerTest do
       assert response(conn, 403) == ""
     end
 
-    test "runs migrations and creates partitions", %{conn: conn} do
+    test "runs migrations", %{conn: conn} do
       tenant = Containers.checkout_tenant(run_migrations: false)
 
       {:ok, db_conn} = Database.connect(tenant, "realtime_test", :stop)
@@ -583,15 +583,6 @@ defmodule RealtimeWeb.TenantControllerTest do
       Process.sleep(1000)
 
       assert {:ok, %{rows: []}} = Postgrex.query(db_conn, "SELECT * FROM realtime.messages", [])
-
-      assert {:ok, %{rows: [[partitions]]}} =
-               Postgrex.query(
-                 db_conn,
-                 "SELECT count(*) FROM pg_inherits WHERE inhparent = 'realtime.messages'::regclass",
-                 []
-               )
-
-      assert partitions > 0
 
       assert %{"healthy" => true, "db_connected" => false, "replication_connected" => false, "connected_cluster" => 0} =
                data
@@ -669,7 +660,7 @@ defmodule RealtimeWeb.TenantControllerTest do
           "settings" => %{
             "db_host" => "127.0.0.1",
             "db_name" => "postgres",
-            "db_user" => "supabase_admin",
+            "db_user" => "supabase_realtime_admin",
             "db_password" => "postgres",
             "db_port" => "#{port}",
             "poll_interval" => 100,

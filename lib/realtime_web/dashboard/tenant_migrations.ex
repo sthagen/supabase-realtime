@@ -24,7 +24,7 @@ defmodule RealtimeWeb.Dashboard.TenantMigrations do
   }
   """
   @application_name "realtime_dashboard_tenant_migrations"
-  @query_timeout 30_000
+  @query_timeout 60_000
   @schema_migrations_query "SELECT version, inserted_at FROM realtime.schema_migrations ORDER BY version DESC"
 
   @impl true
@@ -389,6 +389,10 @@ defmodule RealtimeWeb.Dashboard.TenantMigrations do
     ])
   end
 
+  @doc false
+  # Used for debugging
+  def pg_delta_filter, do: @pg_delta_filter
+
   defp run_pg_delta(%Database{} = settings) do
     case System.find_executable("pgdelta") do
       nil ->
@@ -405,12 +409,17 @@ defmodule RealtimeWeb.Dashboard.TenantMigrations do
           "--target",
           baseline,
           "--filter",
-          @pg_delta_filter,
+          pg_delta_filter(),
           "--format",
           "sql"
         ]
 
-        case System.cmd(path, args, stderr_to_stdout: true) do
+        env = [
+          {"PGDELTA_CONNECTION_TIMEOUT_MS", Integer.to_string(@query_timeout)},
+          {"PGDELTA_CONNECT_TIMEOUT_MS", Integer.to_string(@query_timeout)}
+        ]
+
+        case System.cmd(path, args, stderr_to_stdout: true, env: env) do
           {output, 0} ->
             {:ok, %{status: :no_changes, sql: output}}
 

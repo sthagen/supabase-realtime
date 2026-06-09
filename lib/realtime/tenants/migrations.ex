@@ -7,6 +7,7 @@ defmodule Realtime.Tenants.Migrations do
 
   alias Realtime.Tenants
   alias Realtime.Database
+  alias Realtime.FeatureFlags
   alias Realtime.Registry.Unique
   alias Realtime.Repo
   alias Realtime.Api.Tenant
@@ -88,7 +89,10 @@ defmodule Realtime.Tenants.Migrations do
     AddBinaryPayloadToMessages,
     AddSelectColumnsToSubscriptions,
     Wal2jsonEscapeSpecialChars,
-    AddSendBinaryFunction
+    AddSendBinaryFunction,
+    RenameBroadcastSendWarning,
+    SubscriptionCheckFiltersUsePgAttribute,
+    SetupSupabaseRealtimeAdmin
   }
 
   @migrations [
@@ -164,7 +168,10 @@ defmodule Realtime.Tenants.Migrations do
     {20_260_514_120_000, AddBinaryPayloadToMessages},
     {20_260_527_120_000, AddSelectColumnsToSubscriptions},
     {20_260_528_120_000, Wal2jsonEscapeSpecialChars},
-    {20_260_603_120_000, AddSendBinaryFunction}
+    {20_260_603_120_000, AddSendBinaryFunction},
+    {20_260_605_120_000, RenameBroadcastSendWarning},
+    {20_260_606_110_000, SubscriptionCheckFiltersUsePgAttribute},
+    {20_260_606_120_000, SetupSupabaseRealtimeAdmin}
   ]
 
   defstruct [:tenant_external_id, :settings, migrations_ran: 0]
@@ -224,7 +231,7 @@ defmodule Realtime.Tenants.Migrations do
       :ok ->
         Task.Supervisor.async_nolink(__MODULE__.TaskSupervisor, Api, :update_migrations_ran, [
           tenant_external_id,
-          Enum.count(@migrations)
+          Enum.count(migrations(tenant_external_id))
         ])
 
         :ignore
@@ -257,7 +264,7 @@ defmodule Realtime.Tenants.Migrations do
 
         try do
           opts = [all: true, prefix: "realtime", dynamic_repo: repo]
-          result = Ecto.Migrator.run(Repo, @migrations, :up, opts)
+          result = Ecto.Migrator.run(Repo, migrations(tenant_external_id), :up, opts)
           Telemetry.stop(event, start_time, Map.put(metadata, :migrations_executed, length(result)))
         rescue
           error ->
@@ -283,55 +290,20 @@ defmodule Realtime.Tenants.Migrations do
   defp error_code(_), do: :other
 
   @doc """
-  Create partitions for `realtime.messages` on tenant database.
-
-  Accepts either an existing tenant database connection or a `Tenant`.
+  Returns the migrations to run.
   """
-  @spec create_partitions(Tenant.t()) :: :ok | {:error, term()}
-  def create_partitions(%Tenant{} = tenant) do
-    case Database.connect(tenant, "realtime_health_check") do
-      {:ok, conn} ->
-        result = create_partitions(conn)
-        GenServer.stop(conn)
-        result
-
-      {:error, error} ->
-        log_error("PartitionCreationFailed", error)
-        {:error, error}
-    end
+  @spec migrations(String.t() | nil) :: [{pos_integer(), module()}]
+  def migrations(tenant_external_id \\ nil) do
+    Enum.filter(@migrations, fn {_version, module} -> migration_enabled?(module, tenant_external_id) end)
   end
 
-  @spec create_partitions(pid()) :: :ok
-  def create_partitions(db_conn_pid) do
-    Logger.info("Creating partitions for realtime.messages")
-    today = Date.utc_today()
-    yesterday = Date.add(today, -1)
-    future = Date.add(today, 3)
-
-    dates = Date.range(yesterday, future)
-
-    Enum.each(dates, fn date ->
-      partition_name = "messages_#{date |> Date.to_iso8601() |> String.replace("-", "_")}"
-      start_timestamp = Date.to_string(date)
-      end_timestamp = Date.to_string(Date.add(date, 1))
-
-      Database.transaction(db_conn_pid, fn conn ->
-        query = """
-        CREATE TABLE IF NOT EXISTS realtime.#{partition_name}
-        PARTITION OF realtime.messages
-        FOR VALUES FROM ('#{start_timestamp}') TO ('#{end_timestamp}');
-        """
-
-        case Postgrex.query(conn, query, []) do
-          {:ok, _} -> Logger.debug("Partition #{partition_name} created")
-          {:error, %Postgrex.Error{postgres: %{code: :duplicate_table}}} -> :ok
-          {:error, error} -> log_error("PartitionCreationFailed", error)
-        end
-      end)
-    end)
-
-    :ok
+  defp migration_enabled?(SetupSupabaseRealtimeAdmin, nil = _tenant_external_id) do
+    FeatureFlags.enabled?("use_supabase_realtime_admin")
   end
 
-  def migrations(), do: @migrations
+  defp migration_enabled?(SetupSupabaseRealtimeAdmin, tenant_external_id) when is_binary(tenant_external_id) do
+    FeatureFlags.enabled?("use_supabase_realtime_admin", tenant_external_id)
+  end
+
+  defp migration_enabled?(_migration, _tenant_external_id), do: true
 end

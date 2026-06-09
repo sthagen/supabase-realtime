@@ -3,7 +3,7 @@ defmodule Realtime.Tenants do
   Everything to do with Tenants.
   """
 
-  require Logger
+  use Realtime.Logs
 
   alias Realtime.Api.Tenant
   alias Realtime.Database
@@ -79,10 +79,9 @@ defmodule Realtime.Tenants do
       nil ->
         {:error, :tenant_not_found}
 
-      {:ok, health_conn} ->
+      {:ok, _health_conn} ->
         connected_cluster = UsersCounter.tenant_users(external_id)
         replication_connected = replication_connected?(external_id)
-        Migrations.create_partitions(health_conn)
 
         {:ok,
          %{
@@ -96,10 +95,11 @@ defmodule Realtime.Tenants do
 
       connected_cluster when is_integer(connected_cluster) ->
         tenant = Cache.get_tenant_by_external_id(external_id)
+        migrations = Migrations.run_migrations(tenant)
 
         {:ok,
          %{
-           healthy: provision_tenant(tenant) == :ok,
+           healthy: migrations in [:ok, :noop],
            db_connected: false,
            replication_connected: false,
            connected_cluster: connected_cluster,
@@ -109,10 +109,43 @@ defmodule Realtime.Tenants do
     end
   end
 
-  defp provision_tenant(tenant) do
-    with res when res in [:ok, :noop] <- Migrations.run_migrations(tenant) do
-      Migrations.create_partitions(tenant)
-    end
+  @doc """
+  Creates the `realtime.messages` partitions for the days around today.
+  """
+  @spec create_messages_partitions(pid()) :: :ok
+  def create_messages_partitions(db_conn_pid) do
+    Logger.info("Creating partitions for realtime.messages")
+    today = Date.utc_today()
+    yesterday = Date.add(today, -1)
+    future = Date.add(today, 3)
+
+    dates = Date.range(yesterday, future)
+
+    Enum.each(dates, fn date ->
+      partition_name = "messages_#{date |> Date.to_iso8601() |> String.replace("-", "_")}"
+      start_timestamp = Date.to_string(date)
+      end_timestamp = Date.to_string(Date.add(date, 1))
+
+      Database.transaction(db_conn_pid, fn conn ->
+        create = """
+        CREATE TABLE IF NOT EXISTS realtime.#{partition_name}
+        PARTITION OF realtime.messages
+        FOR VALUES FROM ('#{start_timestamp}') TO ('#{end_timestamp}');
+        """
+
+        alter_owner = "ALTER TABLE realtime.#{partition_name} OWNER TO supabase_realtime_admin"
+
+        with {:ok, _} <- Postgrex.query(conn, create, []),
+             {:ok, _} <- Postgrex.query(conn, alter_owner, []) do
+          Logger.debug("Partition #{partition_name} created")
+        else
+          {:error, %Postgrex.Error{postgres: %{code: :duplicate_table}}} -> :ok
+          {:error, error} -> log_error("PartitionCreationFailed", error)
+        end
+      end)
+    end)
+
+    :ok
   end
 
   defp replication_connected?(external_id) do
@@ -482,7 +515,14 @@ defmodule Realtime.Tenants do
   Checks if migrations for a given tenant need to run.
   """
   @spec run_migrations?(Tenant.t() | integer()) :: boolean()
-  def run_migrations?(%Tenant{} = tenant), do: run_migrations?(tenant.migrations_ran)
+  def run_migrations?(%Tenant{} = tenant) do
+    available_migrations =
+      tenant.external_id
+      |> Migrations.migrations()
+      |> Enum.count()
+
+    tenant.migrations_ran < available_migrations
+  end
 
   def run_migrations?(migrations_ran) when is_integer(migrations_ran),
     do: migrations_ran < Enum.count(Migrations.migrations())

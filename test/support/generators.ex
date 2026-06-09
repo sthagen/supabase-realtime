@@ -20,7 +20,7 @@ defmodule Generators do
           "settings" => %{
             "db_host" => "127.0.0.1",
             "db_name" => "postgres",
-            "db_user" => "supabase_admin",
+            "db_user" => System.get_env("DB_USER", "supabase_realtime_admin"),
             "db_password" => "postgres",
             "db_port" => "#{override[:port] || port()}",
             "poll_interval_ms" => 10,
@@ -48,7 +48,7 @@ defmodule Generators do
   @spec message_fixture(Realtime.Api.Tenant.t()) :: any()
   def message_fixture(tenant, override \\ %{}) do
     {:ok, db_conn} = Database.connect(tenant, "realtime_test", :stop)
-    Realtime.Tenants.Migrations.create_partitions(db_conn)
+    Realtime.Tenants.create_messages_partitions(db_conn)
 
     create_attrs = %{
       "topic" => random_string(),
