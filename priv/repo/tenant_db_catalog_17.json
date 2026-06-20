@@ -74,6 +74,24 @@
           "collation": null,
           "default": null,
           "comment": null
+        },
+        {
+          "name": "negate",
+          "position": 4,
+          "data_type": "boolean",
+          "data_type_str": "boolean",
+          "is_custom_type": false,
+          "custom_type_type": null,
+          "custom_type_category": null,
+          "custom_type_schema": null,
+          "custom_type_name": null,
+          "not_null": false,
+          "is_identity": false,
+          "is_identity_always": false,
+          "is_generated": false,
+          "collation": null,
+          "default": null,
+          "comment": null
         }
       ],
       "privileges": [
@@ -410,6 +428,30 @@
         {
           "sort_order": 7,
           "label": "in"
+        },
+        {
+          "sort_order": 8,
+          "label": "like"
+        },
+        {
+          "sort_order": 9,
+          "label": "ilike"
+        },
+        {
+          "sort_order": 10,
+          "label": "is"
+        },
+        {
+          "sort_order": 11,
+          "label": "match"
+        },
+        {
+          "sort_order": 12,
+          "label": "imatch"
+        },
+        {
+          "sort_order": 13,
+          "label": "isdistinct"
         }
       ],
       "comment": null,
@@ -492,6 +534,11 @@
           "grantable": false
         },
         {
+          "grantee": "dashboard_user",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
           "grantee": "supabase_realtime_admin",
           "privilege": "EXECUTE",
           "grantable": false
@@ -561,6 +608,11 @@
           "grantable": false
         },
         {
+          "grantee": "dashboard_user",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
           "grantee": "supabase_realtime_admin",
           "privilege": "EXECUTE",
           "grantable": false
@@ -618,6 +670,16 @@
       "privileges": [
         {
           "grantee": "PUBLIC",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
+          "grantee": "postgres",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
+          "grantee": "dashboard_user",
           "privilege": "EXECUTE",
           "grantable": false
         },
@@ -689,6 +751,11 @@
         },
         {
           "grantee": "service_role",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
+          "grantee": "dashboard_user",
           "privilege": "EXECUTE",
           "grantable": false
         },
@@ -766,6 +833,76 @@
           "grantable": false
         },
         {
+          "grantee": "dashboard_user",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
+          "grantee": "supabase_realtime_admin",
+          "privilege": "EXECUTE",
+          "grantable": false
+        }
+      ],
+      "security_labels": []
+    },
+    "procedure:realtime.check_equality_op(realtime.equality_op,regtype,text,text,boolean)": {
+      "schema": "realtime",
+      "name": "check_equality_op",
+      "kind": "f",
+      "return_type": "boolean",
+      "return_type_schema": "pg_catalog",
+      "language": "plpgsql",
+      "security_definer": false,
+      "volatility": "s",
+      "parallel_safety": "u",
+      "execution_cost": 100,
+      "result_rows": 0,
+      "is_strict": false,
+      "leakproof": false,
+      "returns_set": false,
+      "argument_count": 5,
+      "argument_default_count": 0,
+      "argument_names": [
+        "op",
+        "type_",
+        "val_1",
+        "val_2",
+        "negate"
+      ],
+      "argument_types": [
+        "realtime.equality_op",
+        "regtype",
+        "text",
+        "text",
+        "boolean"
+      ],
+      "all_argument_types": [],
+      "argument_modes": null,
+      "argument_defaults": null,
+      "source_code": "\ndeclare\n    op_symbol text;\n    res boolean;\nbegin\n    -- IS DISTINCT FROM / IS NOT DISTINCT FROM: infix, both sides typed literals\n    if op = 'isdistinct' then\n        execute format(\n            'select %L::%s %s %L::%s',\n            val_1,\n            type_::text,\n            case when negate then 'IS NOT DISTINCT FROM' else 'IS DISTINCT FROM' end,\n            val_2,\n            type_::text\n        ) into res;\n        return res;\n    end if;\n\n    -- IS requires a keyword RHS (NULL, TRUE, FALSE, UNKNOWN), not a typed literal\n    if op = 'is' then\n        if val_2 not in ('null', 'true', 'false', 'unknown') then\n            raise exception 'invalid value for is filter: must be null, true, false, or unknown';\n        end if;\n        execute format(\n            'select %L::%s %s %s',\n            val_1,\n            type_::text,\n            case when negate then 'IS NOT' else 'IS' end,\n            upper(val_2)\n        ) into res;\n        return res;\n    end if;\n\n    op_symbol = case\n        when op = 'eq'    then '='\n        when op = 'neq'   then '!='\n        when op = 'lt'    then '<'\n        when op = 'lte'   then '<='\n        when op = 'gt'    then '>'\n        when op = 'gte'   then '>='\n        when op = 'in'    then '= any'\n        when op = 'like'   then 'LIKE'\n        when op = 'ilike'  then 'ILIKE'\n        when op = 'match'  then '~'\n        when op = 'imatch' then '~*'\n        else null\n    end;\n\n    if op_symbol is null then\n        raise exception 'unsupported equality operator: %', op::text;\n    end if;\n\n    execute format(\n        'select %L::%s %s (%L::%s)',\n        val_1,\n        type_::text,\n        op_symbol,\n        val_2,\n        case when op = 'in' then type_::text || '[]' else type_::text end\n    ) into res;\n\n    return case when negate then not res else res end;\nend;\n",
+      "binary_path": null,
+      "sql_body": null,
+      "definition": "CREATE OR REPLACE FUNCTION realtime.check_equality_op(op realtime.equality_op, type_ regtype, val_1 text, val_2 text, negate boolean)\n RETURNS boolean\n LANGUAGE plpgsql\n STABLE\nAS $function$\ndeclare\n    op_symbol text;\n    res boolean;\nbegin\n    -- IS DISTINCT FROM / IS NOT DISTINCT FROM: infix, both sides typed literals\n    if op = 'isdistinct' then\n        execute format(\n            'select %L::%s %s %L::%s',\n            val_1,\n            type_::text,\n            case when negate then 'IS NOT DISTINCT FROM' else 'IS DISTINCT FROM' end,\n            val_2,\n            type_::text\n        ) into res;\n        return res;\n    end if;\n\n    -- IS requires a keyword RHS (NULL, TRUE, FALSE, UNKNOWN), not a typed literal\n    if op = 'is' then\n        if val_2 not in ('null', 'true', 'false', 'unknown') then\n            raise exception 'invalid value for is filter: must be null, true, false, or unknown';\n        end if;\n        execute format(\n            'select %L::%s %s %s',\n            val_1,\n            type_::text,\n            case when negate then 'IS NOT' else 'IS' end,\n            upper(val_2)\n        ) into res;\n        return res;\n    end if;\n\n    op_symbol = case\n        when op = 'eq'    then '='\n        when op = 'neq'   then '!='\n        when op = 'lt'    then '<'\n        when op = 'lte'   then '<='\n        when op = 'gt'    then '>'\n        when op = 'gte'   then '>='\n        when op = 'in'    then '= any'\n        when op = 'like'   then 'LIKE'\n        when op = 'ilike'  then 'ILIKE'\n        when op = 'match'  then '~'\n        when op = 'imatch' then '~*'\n        else null\n    end;\n\n    if op_symbol is null then\n        raise exception 'unsupported equality operator: %', op::text;\n    end if;\n\n    execute format(\n        'select %L::%s %s (%L::%s)',\n        val_1,\n        type_::text,\n        op_symbol,\n        val_2,\n        case when op = 'in' then type_::text || '[]' else type_::text end\n    ) into res;\n\n    return case when negate then not res else res end;\nend;\n$function$\n",
+      "config": null,
+      "owner": "supabase_realtime_admin",
+      "comment": null,
+      "privileges": [
+        {
+          "grantee": "PUBLIC",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
+          "grantee": "postgres",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
           "grantee": "supabase_realtime_admin",
           "privilege": "EXECUTE",
           "grantable": false
@@ -781,7 +918,7 @@
       "return_type_schema": "pg_catalog",
       "language": "sql",
       "security_definer": false,
-      "volatility": "i",
+      "volatility": "s",
       "parallel_safety": "u",
       "execution_cost": 100,
       "result_rows": 0,
@@ -801,10 +938,10 @@
       "all_argument_types": [],
       "argument_modes": null,
       "argument_defaults": null,
-      "source_code": "\n    /*\n    Should the record be visible (true) or filtered out (false) after *filters* are applied\n    */\n        select\n            -- Default to allowed when no filters present\n            $2 is null -- no filters. this should not happen because subscriptions has a default\n            or array_length($2, 1) is null -- array length of an empty array is null\n            or bool_and(\n                coalesce(\n                    realtime.check_equality_op(\n                        op:=f.op,\n                        type_:=coalesce(\n                            col.type_oid::regtype, -- null when wal2json version <= 2.4\n                            col.type_name::regtype\n                        ),\n                        -- cast jsonb to text\n                        val_1:=col.value #>> '{}',\n                        val_2:=f.value\n                    ),\n                    false -- if null, filter does not match\n                )\n            )\n        from\n            unnest(filters) f\n            join unnest(columns) col\n                on f.column_name = col.name;\n    ",
+      "source_code": "\n    select\n        filters is null\n        or array_length(filters, 1) is null\n        or coalesce(\n            count(col.name) = count(1)\n            and sum(\n                realtime.check_equality_op(\n                    op:=f.op,\n                    type_:=coalesce(col.type_oid::regtype, col.type_name::regtype),\n                    val_1:=col.value #>> '{}',\n                    val_2:=f.value,\n                    negate:=coalesce(f.negate, false)\n                )::int\n            ) filter (where col.name is not null) = count(col.name),\n            false\n        )\n    from\n        unnest(filters) f\n        left join unnest(columns) col\n            on f.column_name = col.name;\n",
       "binary_path": null,
       "sql_body": null,
-      "definition": "CREATE OR REPLACE FUNCTION realtime.is_visible_through_filters(columns realtime.wal_column[], filters realtime.user_defined_filter[])\n RETURNS boolean\n LANGUAGE sql\n IMMUTABLE\nAS $function$\n    /*\n    Should the record be visible (true) or filtered out (false) after *filters* are applied\n    */\n        select\n            -- Default to allowed when no filters present\n            $2 is null -- no filters. this should not happen because subscriptions has a default\n            or array_length($2, 1) is null -- array length of an empty array is null\n            or bool_and(\n                coalesce(\n                    realtime.check_equality_op(\n                        op:=f.op,\n                        type_:=coalesce(\n                            col.type_oid::regtype, -- null when wal2json version <= 2.4\n                            col.type_name::regtype\n                        ),\n                        -- cast jsonb to text\n                        val_1:=col.value #>> '{}',\n                        val_2:=f.value\n                    ),\n                    false -- if null, filter does not match\n                )\n            )\n        from\n            unnest(filters) f\n            join unnest(columns) col\n                on f.column_name = col.name;\n    $function$\n",
+      "definition": "CREATE OR REPLACE FUNCTION realtime.is_visible_through_filters(columns realtime.wal_column[], filters realtime.user_defined_filter[])\n RETURNS boolean\n LANGUAGE sql\n STABLE\nAS $function$\n    select\n        filters is null\n        or array_length(filters, 1) is null\n        or coalesce(\n            count(col.name) = count(1)\n            and sum(\n                realtime.check_equality_op(\n                    op:=f.op,\n                    type_:=coalesce(col.type_oid::regtype, col.type_name::regtype),\n                    val_1:=col.value #>> '{}',\n                    val_2:=f.value,\n                    negate:=coalesce(f.negate, false)\n                )::int\n            ) filter (where col.name is not null) = count(col.name),\n            false\n        )\n    from\n        unnest(filters) f\n        left join unnest(columns) col\n            on f.column_name = col.name;\n$function$\n",
       "config": null,
       "owner": "supabase_realtime_admin",
       "comment": null,
@@ -831,6 +968,11 @@
         },
         {
           "grantee": "service_role",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
+          "grantee": "dashboard_user",
           "privilege": "EXECUTE",
           "grantable": false
         },
@@ -915,6 +1057,16 @@
           "grantable": false
         },
         {
+          "grantee": "postgres",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
           "grantee": "supabase_realtime_admin",
           "privilege": "EXECUTE",
           "grantable": false
@@ -982,6 +1134,11 @@
           "grantable": false
         },
         {
+          "grantee": "dashboard_user",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
           "grantee": "supabase_realtime_admin",
           "privilege": "EXECUTE",
           "grantable": false
@@ -1031,6 +1188,16 @@
       "privileges": [
         {
           "grantee": "PUBLIC",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
+          "grantee": "postgres",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
+          "grantee": "dashboard_user",
           "privilege": "EXECUTE",
           "grantable": false
         },
@@ -1088,6 +1255,16 @@
           "grantable": false
         },
         {
+          "grantee": "postgres",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
           "grantee": "supabase_realtime_admin",
           "privilege": "EXECUTE",
           "grantable": false
@@ -1117,10 +1294,10 @@
       "all_argument_types": [],
       "argument_modes": null,
       "argument_defaults": null,
-      "source_code": "\ndeclare\n    col_names text[] = coalesce(\n            array_agg(a.attname order by a.attnum),\n            '{}'::text[]\n        )\n        from\n            pg_catalog.pg_attribute a\n        where\n            a.attrelid = new.entity\n            and a.attnum > 0\n            and not a.attisdropped\n            and pg_catalog.has_column_privilege(\n                (new.claims ->> 'role'),\n                a.attrelid,\n                a.attnum,\n                'SELECT'\n            );\n    filter realtime.user_defined_filter;\n    col_type regtype;\n    in_val jsonb;\n    selected_col text;\nbegin\n    for filter in select * from unnest(new.filters) loop\n        if not filter.column_name = any(col_names) then\n            raise exception 'invalid column for filter %', filter.column_name;\n        end if;\n\n        col_type = (\n            select atttypid::regtype\n            from pg_catalog.pg_attribute\n            where attrelid = new.entity\n                  and attname = filter.column_name\n        );\n        if col_type is null then\n            raise exception 'failed to lookup type for column %', filter.column_name;\n        end if;\n\n        if filter.op = 'in'::realtime.equality_op then\n            in_val = realtime.cast(filter.value, (col_type::text || '[]')::regtype);\n            if coalesce(jsonb_array_length(in_val), 0) > 100 then\n                raise exception 'too many values for `in` filter. Maximum 100';\n            end if;\n        else\n            perform realtime.cast(filter.value, col_type);\n        end if;\n    end loop;\n\n    if new.selected_columns is not null then\n        for selected_col in select * from unnest(new.selected_columns) loop\n            if not selected_col = any(col_names) then\n                raise exception 'invalid column for select %', selected_col;\n            end if;\n        end loop;\n    end if;\n\n    new.filters = coalesce(\n        array_agg(f order by f.column_name, f.op, f.value),\n        '{}'\n    ) from unnest(new.filters) f;\n\n    new.selected_columns = (\n        select array_agg(c order by c)\n        from unnest(new.selected_columns) c\n    );\n\n    return new;\nend;\n",
+      "source_code": "\ndeclare\n    col_names text[] = coalesce(\n            array_agg(a.attname order by a.attnum),\n            '{}'::text[]\n        )\n        from\n            pg_catalog.pg_attribute a\n        where\n            a.attrelid = new.entity\n            and a.attnum > 0\n            and not a.attisdropped\n            and pg_catalog.has_column_privilege(\n                (new.claims ->> 'role'),\n                a.attrelid,\n                a.attnum,\n                'SELECT'\n            );\n    filter realtime.user_defined_filter;\n    col_type regtype;\n    in_val jsonb;\n    selected_col text;\nbegin\n    for filter in select * from unnest(new.filters) loop\n        if not filter.column_name = any(col_names) then\n            raise exception 'invalid column for filter %', filter.column_name;\n        end if;\n\n        col_type = (\n            select atttypid::regtype\n            from pg_catalog.pg_attribute\n            where attrelid = new.entity\n                  and attname = filter.column_name\n        );\n        if col_type is null then\n            raise exception 'failed to lookup type for column %', filter.column_name;\n        end if;\n\n        if filter.op = 'in'::realtime.equality_op then\n            in_val = realtime.cast(filter.value, (col_type::text || '[]')::regtype);\n            if coalesce(jsonb_array_length(in_val), 0) > 100 then\n                raise exception 'too many values for `in` filter. Maximum 100';\n            end if;\n        elsif filter.op = 'is'::realtime.equality_op then\n            -- `is` requires a keyword RHS rather than a typed literal\n            if filter.value not in ('null', 'true', 'false', 'unknown') then\n                raise exception 'invalid value for is filter: must be null, true, false, or unknown';\n            end if;\n            -- IS NULL works for any type, but IS TRUE/FALSE/UNKNOWN require a boolean\n            -- operand. Reject the non-null keywords on non-boolean columns here so they\n            -- don't abort apply_rls at WAL time.\n            if filter.value <> 'null' and col_type <> 'boolean'::regtype then\n                raise exception 'is % filter requires a boolean column, got %', filter.value, col_type::text;\n            end if;\n        elsif filter.op in ('like'::realtime.equality_op, 'ilike'::realtime.equality_op) then\n            -- like/ilike apply the text pattern operator (~~); reject column types that\n            -- have no such operator instead of failing at WAL time\n            if not exists (\n                select 1 from pg_catalog.pg_operator\n                where oprname = '~~' and oprleft = col_type\n            ) then\n                raise exception 'operator % requires a text-compatible column type, got %', filter.op::text, col_type::text;\n            end if;\n        elsif filter.op in ('match'::realtime.equality_op, 'imatch'::realtime.equality_op) then\n            -- match/imatch apply the regex operators ~ / ~*; reject column types that have\n            -- no such operator (e.g. integer) instead of failing at WAL time, mirroring the\n            -- like/ilike guard above.\n            if not exists (\n                select 1 from pg_catalog.pg_operator\n                where oprname = case when filter.op = 'imatch'::realtime.equality_op then '~*' else '~' end\n                  and oprleft = col_type\n                  and oprright = col_type\n                  and oprresult = 'boolean'::regtype\n            ) then\n                raise exception 'operator % requires a text-compatible column type, got %', filter.op::text, col_type::text;\n            end if;\n            -- validate the regex eagerly so a bad pattern is rejected here, not inside\n            -- apply_rls where it would abort the WAL stream for the entity\n            begin\n                perform '' ~ filter.value;\n            exception when others then\n                raise exception 'invalid regular expression for % filter: %', filter.op::text, sqlerrm;\n            end;\n        else\n            -- eq/neq/lt/lte/gt/gte: value must be coercable to the type\n            perform realtime.cast(filter.value, col_type);\n        end if;\n    end loop;\n\n    if new.selected_columns is not null then\n        for selected_col in select * from unnest(new.selected_columns) loop\n            if not selected_col = any(col_names) then\n                raise exception 'invalid column for select %', selected_col;\n            end if;\n        end loop;\n    end if;\n\n    -- Apply consistent order to filters so the unique constraint can't be tricked by a\n    -- different filter order. negate is part of the sort key.\n    new.filters = coalesce(\n        array_agg(f order by f.column_name, f.op, f.value, f.negate),\n        '{}'\n    ) from unnest(new.filters) f;\n\n    new.selected_columns = (\n        select array_agg(c order by c)\n        from unnest(new.selected_columns) c\n    );\n\n    return new;\nend;\n",
       "binary_path": null,
       "sql_body": null,
-      "definition": "CREATE OR REPLACE FUNCTION realtime.subscription_check_filters()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\ndeclare\n    col_names text[] = coalesce(\n            array_agg(a.attname order by a.attnum),\n            '{}'::text[]\n        )\n        from\n            pg_catalog.pg_attribute a\n        where\n            a.attrelid = new.entity\n            and a.attnum > 0\n            and not a.attisdropped\n            and pg_catalog.has_column_privilege(\n                (new.claims ->> 'role'),\n                a.attrelid,\n                a.attnum,\n                'SELECT'\n            );\n    filter realtime.user_defined_filter;\n    col_type regtype;\n    in_val jsonb;\n    selected_col text;\nbegin\n    for filter in select * from unnest(new.filters) loop\n        if not filter.column_name = any(col_names) then\n            raise exception 'invalid column for filter %', filter.column_name;\n        end if;\n\n        col_type = (\n            select atttypid::regtype\n            from pg_catalog.pg_attribute\n            where attrelid = new.entity\n                  and attname = filter.column_name\n        );\n        if col_type is null then\n            raise exception 'failed to lookup type for column %', filter.column_name;\n        end if;\n\n        if filter.op = 'in'::realtime.equality_op then\n            in_val = realtime.cast(filter.value, (col_type::text || '[]')::regtype);\n            if coalesce(jsonb_array_length(in_val), 0) > 100 then\n                raise exception 'too many values for `in` filter. Maximum 100';\n            end if;\n        else\n            perform realtime.cast(filter.value, col_type);\n        end if;\n    end loop;\n\n    if new.selected_columns is not null then\n        for selected_col in select * from unnest(new.selected_columns) loop\n            if not selected_col = any(col_names) then\n                raise exception 'invalid column for select %', selected_col;\n            end if;\n        end loop;\n    end if;\n\n    new.filters = coalesce(\n        array_agg(f order by f.column_name, f.op, f.value),\n        '{}'\n    ) from unnest(new.filters) f;\n\n    new.selected_columns = (\n        select array_agg(c order by c)\n        from unnest(new.selected_columns) c\n    );\n\n    return new;\nend;\n$function$\n",
+      "definition": "CREATE OR REPLACE FUNCTION realtime.subscription_check_filters()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\ndeclare\n    col_names text[] = coalesce(\n            array_agg(a.attname order by a.attnum),\n            '{}'::text[]\n        )\n        from\n            pg_catalog.pg_attribute a\n        where\n            a.attrelid = new.entity\n            and a.attnum > 0\n            and not a.attisdropped\n            and pg_catalog.has_column_privilege(\n                (new.claims ->> 'role'),\n                a.attrelid,\n                a.attnum,\n                'SELECT'\n            );\n    filter realtime.user_defined_filter;\n    col_type regtype;\n    in_val jsonb;\n    selected_col text;\nbegin\n    for filter in select * from unnest(new.filters) loop\n        if not filter.column_name = any(col_names) then\n            raise exception 'invalid column for filter %', filter.column_name;\n        end if;\n\n        col_type = (\n            select atttypid::regtype\n            from pg_catalog.pg_attribute\n            where attrelid = new.entity\n                  and attname = filter.column_name\n        );\n        if col_type is null then\n            raise exception 'failed to lookup type for column %', filter.column_name;\n        end if;\n\n        if filter.op = 'in'::realtime.equality_op then\n            in_val = realtime.cast(filter.value, (col_type::text || '[]')::regtype);\n            if coalesce(jsonb_array_length(in_val), 0) > 100 then\n                raise exception 'too many values for `in` filter. Maximum 100';\n            end if;\n        elsif filter.op = 'is'::realtime.equality_op then\n            -- `is` requires a keyword RHS rather than a typed literal\n            if filter.value not in ('null', 'true', 'false', 'unknown') then\n                raise exception 'invalid value for is filter: must be null, true, false, or unknown';\n            end if;\n            -- IS NULL works for any type, but IS TRUE/FALSE/UNKNOWN require a boolean\n            -- operand. Reject the non-null keywords on non-boolean columns here so they\n            -- don't abort apply_rls at WAL time.\n            if filter.value <> 'null' and col_type <> 'boolean'::regtype then\n                raise exception 'is % filter requires a boolean column, got %', filter.value, col_type::text;\n            end if;\n        elsif filter.op in ('like'::realtime.equality_op, 'ilike'::realtime.equality_op) then\n            -- like/ilike apply the text pattern operator (~~); reject column types that\n            -- have no such operator instead of failing at WAL time\n            if not exists (\n                select 1 from pg_catalog.pg_operator\n                where oprname = '~~' and oprleft = col_type\n            ) then\n                raise exception 'operator % requires a text-compatible column type, got %', filter.op::text, col_type::text;\n            end if;\n        elsif filter.op in ('match'::realtime.equality_op, 'imatch'::realtime.equality_op) then\n            -- match/imatch apply the regex operators ~ / ~*; reject column types that have\n            -- no such operator (e.g. integer) instead of failing at WAL time, mirroring the\n            -- like/ilike guard above.\n            if not exists (\n                select 1 from pg_catalog.pg_operator\n                where oprname = case when filter.op = 'imatch'::realtime.equality_op then '~*' else '~' end\n                  and oprleft = col_type\n                  and oprright = col_type\n                  and oprresult = 'boolean'::regtype\n            ) then\n                raise exception 'operator % requires a text-compatible column type, got %', filter.op::text, col_type::text;\n            end if;\n            -- validate the regex eagerly so a bad pattern is rejected here, not inside\n            -- apply_rls where it would abort the WAL stream for the entity\n            begin\n                perform '' ~ filter.value;\n            exception when others then\n                raise exception 'invalid regular expression for % filter: %', filter.op::text, sqlerrm;\n            end;\n        else\n            -- eq/neq/lt/lte/gt/gte: value must be coercable to the type\n            perform realtime.cast(filter.value, col_type);\n        end if;\n    end loop;\n\n    if new.selected_columns is not null then\n        for selected_col in select * from unnest(new.selected_columns) loop\n            if not selected_col = any(col_names) then\n                raise exception 'invalid column for select %', selected_col;\n            end if;\n        end loop;\n    end if;\n\n    -- Apply consistent order to filters so the unique constraint can't be tricked by a\n    -- different filter order. negate is part of the sort key.\n    new.filters = coalesce(\n        array_agg(f order by f.column_name, f.op, f.value, f.negate),\n        '{}'\n    ) from unnest(new.filters) f;\n\n    new.selected_columns = (\n        select array_agg(c order by c)\n        from unnest(new.selected_columns) c\n    );\n\n    return new;\nend;\n$function$\n",
       "config": null,
       "owner": "supabase_realtime_admin",
       "comment": null,
@@ -1147,6 +1324,11 @@
         },
         {
           "grantee": "service_role",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
+          "grantee": "dashboard_user",
           "privilege": "EXECUTE",
           "grantable": false
         },
@@ -1218,6 +1400,11 @@
           "grantable": false
         },
         {
+          "grantee": "dashboard_user",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
           "grantee": "supabase_realtime_admin",
           "privilege": "EXECUTE",
           "grantable": false
@@ -1257,6 +1444,16 @@
       "privileges": [
         {
           "grantee": "PUBLIC",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
+          "grantee": "postgres",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
+          "grantee": "dashboard_user",
           "privilege": "EXECUTE",
           "grantable": false
         },
@@ -1304,6 +1501,16 @@
       "privileges": [
         {
           "grantee": "PUBLIC",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
+          "grantee": "postgres",
+          "privilege": "EXECUTE",
+          "grantable": false
+        },
+        {
+          "grantee": "dashboard_user",
           "privilege": "EXECUTE",
           "grantable": false
         },
@@ -1359,6 +1566,46 @@
       "is_index_partition": false,
       "parent_index_name": null,
       "definition": "CREATE INDEX messages_inserted_at_topic_index ON ONLY realtime.messages USING btree (inserted_at DESC, topic) WHERE extension = 'broadcast'::text AND private IS TRUE",
+      "comment": null,
+      "owner": "supabase_realtime_admin"
+    },
+    "index:realtime.subscription.ix_realtime_subscription_entity": {
+      "schema": "realtime",
+      "table_name": "subscription",
+      "name": "ix_realtime_subscription_entity",
+      "storage_params": [],
+      "statistics_target": [
+        -1
+      ],
+      "index_type": "btree",
+      "tablespace": null,
+      "is_unique": false,
+      "is_primary": false,
+      "is_exclusion": false,
+      "nulls_not_distinct": false,
+      "immediate": true,
+      "is_clustered": false,
+      "is_replica_identity": false,
+      "key_columns": [
+        4
+      ],
+      "column_collations": [
+        null
+      ],
+      "operator_classes": [
+        "default"
+      ],
+      "column_options": [
+        0
+      ],
+      "index_expressions": null,
+      "partial_predicate": null,
+      "table_relkind": "r",
+      "is_owned_by_constraint": false,
+      "is_partitioned_index": false,
+      "is_index_partition": false,
+      "parent_index_name": null,
+      "definition": "CREATE INDEX ix_realtime_subscription_entity ON realtime.subscription USING btree (entity)",
       "comment": null,
       "owner": "supabase_realtime_admin"
     },
@@ -1421,46 +1668,6 @@
       "definition": "CREATE UNIQUE INDEX subscription_subscription_id_entity_filters_action_filter_selec ON realtime.subscription USING btree (subscription_id, entity, filters, action_filter, COALESCE(selected_columns, '{}'::text[]))",
       "comment": null,
       "owner": "supabase_realtime_admin"
-    },
-    "index:realtime.subscription.ix_realtime_subscription_entity": {
-      "schema": "realtime",
-      "table_name": "subscription",
-      "name": "ix_realtime_subscription_entity",
-      "storage_params": [],
-      "statistics_target": [
-        -1
-      ],
-      "index_type": "btree",
-      "tablespace": null,
-      "is_unique": false,
-      "is_primary": false,
-      "is_exclusion": false,
-      "nulls_not_distinct": false,
-      "immediate": true,
-      "is_clustered": false,
-      "is_replica_identity": false,
-      "key_columns": [
-        4
-      ],
-      "column_collations": [
-        null
-      ],
-      "operator_classes": [
-        "default"
-      ],
-      "column_options": [
-        0
-      ],
-      "index_expressions": null,
-      "partial_predicate": null,
-      "table_relkind": "r",
-      "is_owned_by_constraint": false,
-      "is_partitioned_index": false,
-      "is_index_partition": false,
-      "parent_index_name": null,
-      "definition": "CREATE INDEX ix_realtime_subscription_entity ON realtime.subscription USING btree (entity)",
-      "comment": null,
-      "owner": "supabase_realtime_admin"
     }
   },
   "materializedViews": {},
@@ -1487,17 +1694,7 @@
         {
           "grantee": "postgres",
           "privilege": "USAGE",
-          "grantable": false
-        },
-        {
-          "grantee": "postgres",
-          "privilege": "USAGE",
-          "grantable": false
-        },
-        {
-          "grantee": "anon",
-          "privilege": "USAGE",
-          "grantable": false
+          "grantable": true
         },
         {
           "grantee": "anon",
@@ -1510,34 +1707,14 @@
           "grantable": false
         },
         {
-          "grantee": "authenticated",
-          "privilege": "USAGE",
-          "grantable": false
-        },
-        {
           "grantee": "service_role",
           "privilege": "USAGE",
-          "grantable": false
-        },
-        {
-          "grantee": "service_role",
-          "privilege": "USAGE",
-          "grantable": false
-        },
-        {
-          "grantee": "supabase_realtime_admin",
-          "privilege": "CREATE",
           "grantable": false
         },
         {
           "grantee": "supabase_realtime_admin",
           "privilege": "CREATE",
           "grantable": true
-        },
-        {
-          "grantee": "supabase_realtime_admin",
-          "privilege": "USAGE",
-          "grantable": false
         },
         {
           "grantee": "supabase_realtime_admin",
@@ -1817,7 +1994,25 @@
       "privileges": [
         {
           "grantee": "postgres",
+          "privilege": "DELETE",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "postgres",
           "privilege": "INSERT",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "postgres",
+          "privilege": "MAINTAIN",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "postgres",
+          "privilege": "REFERENCES",
           "grantable": false,
           "columns": null
         },
@@ -1829,6 +2024,18 @@
         },
         {
           "grantee": "postgres",
+          "privilege": "TRIGGER",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "postgres",
+          "privilege": "TRUNCATE",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "postgres",
           "privilege": "UPDATE",
           "grantable": false,
           "columns": null
@@ -1883,6 +2090,54 @@
         },
         {
           "grantee": "service_role",
+          "privilege": "UPDATE",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "DELETE",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "INSERT",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "MAINTAIN",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "REFERENCES",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "SELECT",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "TRIGGER",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "TRUNCATE",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
           "privilege": "UPDATE",
           "grantable": false,
           "columns": null
@@ -1955,7 +2210,7 @@
       "options": null,
       "partition_bound": null,
       "partition_by": null,
-      "owner": "supabase_realtime_admin",
+      "owner": "supabase_admin",
       "comment": null,
       "parent_schema": null,
       "parent_name": null,
@@ -2029,33 +2284,105 @@
           "on_delete": null,
           "match_type": null,
           "check_expression": null,
-          "owner": "supabase_realtime_admin",
+          "owner": "supabase_admin",
           "definition": "PRIMARY KEY (version)",
           "comment": null
         }
       ],
       "privileges": [
         {
-          "grantee": "postgres",
+          "grantee": "supabase_admin",
+          "privilege": "DELETE",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "supabase_admin",
+          "privilege": "INSERT",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "supabase_admin",
+          "privilege": "MAINTAIN",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "supabase_admin",
+          "privilege": "REFERENCES",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "supabase_admin",
           "privilege": "SELECT",
           "grantable": false,
           "columns": null
         },
         {
-          "grantee": "anon",
+          "grantee": "supabase_admin",
+          "privilege": "TRIGGER",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "supabase_admin",
+          "privilege": "TRUNCATE",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "supabase_admin",
+          "privilege": "UPDATE",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "DELETE",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "INSERT",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "MAINTAIN",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "REFERENCES",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
           "privilege": "SELECT",
           "grantable": false,
           "columns": null
         },
         {
-          "grantee": "authenticated",
-          "privilege": "SELECT",
+          "grantee": "dashboard_user",
+          "privilege": "TRIGGER",
           "grantable": false,
           "columns": null
         },
         {
-          "grantee": "service_role",
-          "privilege": "SELECT",
+          "grantee": "dashboard_user",
+          "privilege": "TRUNCATE",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "UPDATE",
           "grantable": false,
           "columns": null
         },
@@ -2375,7 +2702,49 @@
       "privileges": [
         {
           "grantee": "postgres",
+          "privilege": "DELETE",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "postgres",
+          "privilege": "INSERT",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "postgres",
+          "privilege": "MAINTAIN",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "postgres",
+          "privilege": "REFERENCES",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "postgres",
           "privilege": "SELECT",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "postgres",
+          "privilege": "TRIGGER",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "postgres",
+          "privilege": "TRUNCATE",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "postgres",
+          "privilege": "UPDATE",
           "grantable": false,
           "columns": null
         },
@@ -2394,6 +2763,54 @@
         {
           "grantee": "service_role",
           "privilege": "SELECT",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "DELETE",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "INSERT",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "MAINTAIN",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "REFERENCES",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "SELECT",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "TRIGGER",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "TRUNCATE",
+          "grantable": false,
+          "columns": null
+        },
+        {
+          "grantee": "dashboard_user",
+          "privilege": "UPDATE",
           "grantable": false,
           "columns": null
         },
@@ -2648,17 +3065,7 @@
       "deptype": "n"
     },
     {
-      "dependent_stable_id": "acl:table:realtime.schema_migrations::grantee:anon",
-      "referenced_stable_id": "table:realtime.schema_migrations",
-      "deptype": "n"
-    },
-    {
-      "dependent_stable_id": "acl:table:realtime.schema_migrations::grantee:authenticated",
-      "referenced_stable_id": "table:realtime.schema_migrations",
-      "deptype": "n"
-    },
-    {
-      "dependent_stable_id": "acl:table:realtime.schema_migrations::grantee:service_role",
+      "dependent_stable_id": "acl:table:realtime.schema_migrations::grantee:supabase_realtime_admin",
       "referenced_stable_id": "table:realtime.schema_migrations",
       "deptype": "n"
     },
@@ -2690,12 +3097,12 @@
     {
       "dependent_stable_id": "constraint:realtime.messages.messages_payload_exclusive",
       "referenced_stable_id": "column:realtime.messages.binary_payload",
-      "deptype": "a"
+      "deptype": "n"
     },
     {
       "dependent_stable_id": "constraint:realtime.messages.messages_payload_exclusive",
       "referenced_stable_id": "column:realtime.messages.binary_payload",
-      "deptype": "n"
+      "deptype": "a"
     },
     {
       "dependent_stable_id": "constraint:realtime.messages.messages_payload_exclusive",
@@ -2730,12 +3137,12 @@
     {
       "dependent_stable_id": "constraint:realtime.subscription.subscription_action_filter_check",
       "referenced_stable_id": "column:realtime.subscription.action_filter",
-      "deptype": "a"
+      "deptype": "n"
     },
     {
       "dependent_stable_id": "constraint:realtime.subscription.subscription_action_filter_check",
       "referenced_stable_id": "column:realtime.subscription.action_filter",
-      "deptype": "n"
+      "deptype": "a"
     },
     {
       "dependent_stable_id": "defacl:supabase_admin:f:schema:realtime:grantee:dashboard_user",
@@ -2840,6 +3247,16 @@
     {
       "dependent_stable_id": "procedure:realtime.build_prepared_statement_sql(text,regclass,realtime.wal_column[])",
       "referenced_stable_id": "schema:realtime",
+      "deptype": "n"
+    },
+    {
+      "dependent_stable_id": "procedure:realtime.check_equality_op(realtime.equality_op,regtype,text,text,boolean)",
+      "referenced_stable_id": "schema:realtime",
+      "deptype": "n"
+    },
+    {
+      "dependent_stable_id": "procedure:realtime.check_equality_op(realtime.equality_op,regtype,text,text,boolean)",
+      "referenced_stable_id": "type:realtime.equality_op",
       "deptype": "n"
     },
     {
