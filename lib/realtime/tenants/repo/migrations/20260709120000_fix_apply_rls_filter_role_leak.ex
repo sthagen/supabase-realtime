@@ -1,183 +1,9 @@
-defmodule Realtime.Tenants.Migrations.RevertPostgrestFilterOps do
-  @moduledoc """
-  Additive revert of `AddPostgrestFilterOps` (20260616120000). We never edit shipped migrations,
-  so this restores the walrus functions to their pre-20260616120000 definitions, drops the
-  `negate` attribute added to `realtime.user_defined_filter`, and drops the 5-arg
-  `check_equality_op` overload.
-
-  The new `equality_op` enum values (`like`, `ilike`, `is`, `match`, `imatch`, `isdistinct`)
-  cannot be removed in Postgres, so they remain; the reverted client no longer emits them.
-
-  `realtime.subscription` is ephemeral (clients re-create their subscriptions on reconnect), so it
-  is truncated before the type is altered back to its 3-field shape.
-  """
+defmodule Realtime.Tenants.Migrations.FixApplyRlsFilterRoleLeak do
+  @moduledoc false
 
   use Ecto.Migration
 
   def change do
-    # Subscriptions are ephemeral. Clearing the table first keeps the type arity change below safe.
-    execute("truncate realtime.subscription;")
-
-    # Restore the original 4-arg check_equality_op (20230128025114). Untouched by the filter ops
-    # migration, but recreated explicitly so the function matches the pre-revert source.
-    execute("""
-    create or replace function realtime.check_equality_op(
-        op realtime.equality_op,
-        type_ regtype,
-        val_1 text,
-        val_2 text
-    )
-        returns bool
-        immutable
-        language plpgsql
-    as $$
-    /*
-    Casts *val_1* and *val_2* as type *type_* and check the *op* condition for truthiness
-    */
-    declare
-        op_symbol text = (
-            case
-                when op = 'eq' then '='
-                when op = 'neq' then '!='
-                when op = 'lt' then '<'
-                when op = 'lte' then '<='
-                when op = 'gt' then '>'
-                when op = 'gte' then '>='
-                when op = 'in' then '= any'
-                else 'UNKNOWN OP'
-            end
-        );
-        res boolean;
-    begin
-        execute format(
-            'select %L::'|| type_::text || ' ' || op_symbol
-            || ' ( %L::'
-            || (
-                case
-                    when op = 'in' then type_::text || '[]'
-                    else type_::text end
-            )
-            || ')', val_1, val_2) into res;
-        return res;
-    end;
-    $$;
-    """)
-
-    # Restore is_visible_through_filters (20220908172859): inner join, bool_and, 4-arg
-    # check_equality_op, no negate.
-    execute("""
-    create or replace function realtime.is_visible_through_filters(columns realtime.wal_column[], filters realtime.user_defined_filter[])
-      returns bool
-      language sql
-      immutable
-    as $$
-    /*
-    Should the record be visible (true) or filtered out (false) after *filters* are applied
-    */
-        select
-            -- Default to allowed when no filters present
-            $2 is null -- no filters. this should not happen because subscriptions has a default
-            or array_length($2, 1) is null -- array length of an empty array is null
-            or bool_and(
-                coalesce(
-                    realtime.check_equality_op(
-                        op:=f.op,
-                        type_:=coalesce(
-                            col.type_oid::regtype, -- null when wal2json version <= 2.4
-                            col.type_name::regtype
-                        ),
-                        -- cast jsonb to text
-                        val_1:=col.value #>> '{}',
-                        val_2:=f.value
-                    ),
-                    false -- if null, filter does not match
-                )
-            )
-        from
-            unnest(filters) f
-            join unnest(columns) col
-                on f.column_name = col.name;
-    $$;
-    """)
-
-    # Restore subscription_check_filters (20260606110000): pg_attribute based, no new operators,
-    # filters ordered without negate.
-    execute("""
-    create or replace function realtime.subscription_check_filters()
-        returns trigger
-        language plpgsql
-    as $$
-    declare
-        col_names text[] = coalesce(
-                array_agg(a.attname order by a.attnum),
-                '{}'::text[]
-            )
-            from
-                pg_catalog.pg_attribute a
-            where
-                a.attrelid = new.entity
-                and a.attnum > 0
-                and not a.attisdropped
-                and pg_catalog.has_column_privilege(
-                    (new.claims ->> 'role'),
-                    a.attrelid,
-                    a.attnum,
-                    'SELECT'
-                );
-        filter realtime.user_defined_filter;
-        col_type regtype;
-        in_val jsonb;
-        selected_col text;
-    begin
-        for filter in select * from unnest(new.filters) loop
-            if not filter.column_name = any(col_names) then
-                raise exception 'invalid column for filter %', filter.column_name;
-            end if;
-
-            col_type = (
-                select atttypid::regtype
-                from pg_catalog.pg_attribute
-                where attrelid = new.entity
-                      and attname = filter.column_name
-            );
-            if col_type is null then
-                raise exception 'failed to lookup type for column %', filter.column_name;
-            end if;
-
-            if filter.op = 'in'::realtime.equality_op then
-                in_val = realtime.cast(filter.value, (col_type::text || '[]')::regtype);
-                if coalesce(jsonb_array_length(in_val), 0) > 100 then
-                    raise exception 'too many values for `in` filter. Maximum 100';
-                end if;
-            else
-                perform realtime.cast(filter.value, col_type);
-            end if;
-        end loop;
-
-        if new.selected_columns is not null then
-            for selected_col in select * from unnest(new.selected_columns) loop
-                if not selected_col = any(col_names) then
-                    raise exception 'invalid column for select %', selected_col;
-                end if;
-            end loop;
-        end if;
-
-        new.filters = coalesce(
-            array_agg(f order by f.column_name, f.op, f.value),
-            '{}'
-        ) from unnest(new.filters) f;
-
-        new.selected_columns = (
-            select array_agg(c order by c)
-            from unnest(new.selected_columns) c
-        );
-
-        return new;
-    end;
-    $$;
-    """)
-
-    # Restore apply_rls (20260527120000): uses is_visible_through_filters without negate.
     execute("""
     create or replace function realtime.apply_rls(wal jsonb, max_record_bytes int = 1024 * 1024)
         returns setof realtime.wal_rls
@@ -403,6 +229,18 @@ defmodule Realtime.Tenants.Migrations.RevertPostgrestFilterOps do
 
                         execute 'execute walrus_rls_stmt' into subscription_has_access;
 
+                        -- Reset the role on every FOR..LOOP batch execution.
+                        -- The first batch of 10 rows is pre-fetched using the current connection role (PG internal behaviour)
+                        -- then we have to reset it again otherwise it would use the role defined in the `set_config` above
+                        -- to fetch the remaining rows when rows>10, which could be a user-defined role that lacks execution grants.
+                        -- The flow is:
+                        --   1. run batch with conn role
+                        --   2. set_config working_role
+                        --   3. execute walrus
+                        --   4. reset role (revert)
+                        --   5. repeat
+                        perform set_config('role', null, true);
+
                         if subscription_has_access then
                             visible_role_sub_ids = visible_role_sub_ids || subscription_id;
                         end if;
@@ -538,48 +376,6 @@ defmodule Realtime.Tenants.Migrations.RevertPostgrestFilterOps do
         perform set_config('role', null, true);
     end;
     $$;
-    """)
-
-    # Drop the negate-aware 5-arg overload added by the filter ops migration.
-    execute("drop function if exists realtime.check_equality_op(realtime.equality_op, regtype, text, text, boolean);")
-
-    execute("""
-    do $$
-    begin
-        if exists (select 1 from pg_extension where extname = 'orioledb') then
-            execute 'drop index if exists realtime.subscription_subscription_id_entity_filters_action_filter_selected_columns_key';
-        end if;
-    end $$;
-    """)
-
-    # Drop the `negate` attribute so realtime.user_defined_filter is back to 3 fields. Guard on
-    # pg_attribute for idempotency. CASCADE because the type backs the `filters` column.
-    execute("""
-    do $$
-    begin
-        if exists (
-            select 1
-            from pg_type ty
-            join pg_class c on c.oid = ty.typrelid
-            join pg_attribute a on a.attrelid = c.oid
-            join pg_namespace n on n.oid = ty.typnamespace
-            where n.nspname = 'realtime'
-              and ty.typname = 'user_defined_filter'
-              and a.attname = 'negate'
-              and not a.attisdropped
-        ) then
-            alter type realtime.user_defined_filter drop attribute negate cascade;
-        end if;
-    end $$;
-    """)
-
-    execute("""
-    do $$
-    begin
-        if exists (select 1 from pg_extension where extname = 'orioledb') then
-            execute 'create unique index if not exists subscription_subscription_id_entity_filters_action_filter_selected_columns_key on realtime.subscription (subscription_id, entity, filters, action_filter, coalesce(selected_columns, ''{}''))';
-        end if;
-    end $$;
     """)
   end
 end

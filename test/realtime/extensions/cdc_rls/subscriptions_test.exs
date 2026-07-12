@@ -700,6 +700,24 @@ defmodule Realtime.Extensions.PostgresCdcRls.SubscriptionsTest do
           password: admin_settings.password
         )
 
+      # OrioleDB can't ALTER TYPE a type an index depends on.
+      %Postgrex.Result{rows: [[index_name, index_def]]} =
+        Postgrex.query!(
+          admin_conn,
+          """
+          SELECT i.indexrelid::regclass::text, pg_get_indexdef(i.indexrelid)
+          FROM pg_index i
+          WHERE i.indrelid = 'realtime.subscription'::regclass
+            AND EXISTS (
+              SELECT 1 FROM pg_attribute a
+              WHERE a.attrelid = i.indrelid AND a.attname = 'filters' AND a.attnum = ANY(i.indkey)
+            )
+          """,
+          []
+        )
+
+      Postgrex.query!(admin_conn, "DROP INDEX IF EXISTS #{index_name}", [])
+
       Postgrex.query!(
         admin_conn,
         "alter type realtime.user_defined_filter drop attribute negate cascade",
@@ -721,6 +739,8 @@ defmodule Realtime.Extensions.PostgresCdcRls.SubscriptionsTest do
         "alter type realtime.user_defined_filter add attribute negate boolean cascade",
         []
       )
+
+      Postgrex.query!(admin_conn, index_def, [])
 
       {:ok, subscription_params} =
         Subscriptions.parse_subscription_params(%{
@@ -781,7 +801,6 @@ defmodule Realtime.Extensions.PostgresCdcRls.SubscriptionsTest do
     test "create works for a table whose name contains a backslash", %{conn: conn} do
       Postgrex.query!(conn, ~s|CREATE TABLE "my\\table" (id int)|, [])
       Postgrex.query!(conn, ~s|GRANT ALL ON "my\\table" TO anon|, [])
-      Postgrex.query!(conn, ~s|ALTER PUBLICATION supabase_realtime_test ADD TABLE "my\\table"|, [])
 
       {:ok, subscription_params} =
         Subscriptions.parse_subscription_params(%{"schema" => "public", "table" => "my\\table"})
@@ -1254,7 +1273,72 @@ defmodule Realtime.Extensions.PostgresCdcRls.SubscriptionsTest do
     end
   end
 
-  defp create_subscriptions(conn, num) do
+  describe "regression tests" do
+    test "list_changes succeeds for custom roles without execution grants (issue #2001 with non-builtin role)",
+         %{conn: conn, tenant: tenant} do
+      {:ok, admin_settings} = Database.from_tenant(tenant, "realtime_test", :stop)
+
+      {:ok, admin_conn} =
+        Postgrex.start_link(
+          hostname: admin_settings.hostname,
+          port: admin_settings.port,
+          database: admin_settings.database,
+          username: "supabase_admin",
+          password: admin_settings.password
+        )
+
+      Postgrex.query!(
+        admin_conn,
+        "revoke execute on function realtime.check_equality_op(realtime.equality_op, regtype, text, text, boolean) from public",
+        []
+      )
+
+      Postgrex.query(admin_conn, "drop role if exists custom_app_role", [])
+      Postgrex.query!(admin_conn, "create role custom_app_role nologin", [])
+      Postgrex.query!(admin_conn, "grant custom_app_role to supabase_realtime_admin", [])
+      Postgrex.query!(admin_conn, "grant all on table public.test to custom_app_role", [])
+      Postgrex.query!(admin_conn, "alter table public.test enable row level security", [])
+
+      Postgrex.query!(
+        admin_conn,
+        "create policy custom_app_role_all on public.test for all to custom_app_role using (true)",
+        []
+      )
+
+      {:ok, subscription_params} =
+        Subscriptions.parse_subscription_params(%{
+          "schema" => "public",
+          "table" => "test",
+          "filter" => "id=eq.1"
+        })
+
+      # create 11 subscriptions to force the pre-fetch cursor (FOR loop) behaviour in apply_rls function
+      assert {:ok, _} =
+               create_subscriptions(conn, 11, role: "custom_app_role", subscription_params: subscription_params)
+
+      slot_name = "test_custom_role_grant_#{:rand.uniform(999_999)}"
+      Postgrex.query!(conn, "SELECT pg_create_logical_replication_slot($1, 'wal2json')", [slot_name])
+
+      Postgrex.query!(conn, "insert into test (id, details) values (1, 'hello')", [])
+
+      assert {:ok, %Postgrex.Result{rows: rows}} =
+               Postgrex.query(
+                 conn,
+                 "select wal, subscription_ids from realtime.list_changes($1, $2, 100, 1048576)",
+                 ["supabase_realtime_test", slot_name]
+               )
+
+      sub_ids = rows |> Enum.flat_map(fn [_wal, sub_ids] -> sub_ids end)
+      assert length(sub_ids) == 11
+
+      Postgrex.query(conn, "SELECT pg_drop_replication_slot($1)", [slot_name])
+    end
+  end
+
+  defp create_subscriptions(conn, num, opts \\ []) do
+    role = Keyword.get(opts, :role, "anon")
+    subscription_params = Keyword.get(opts, :subscription_params, {"*", "public", "*", [], nil})
+
     params_list =
       Enum.reduce(1..num, [], fn _i, acc ->
         [
@@ -1264,10 +1348,10 @@ defmodule Realtime.Extensions.PostgresCdcRls.SubscriptionsTest do
               "iat" => 1_658_600_791,
               "iss" => "supabase",
               "ref" => "127.0.0.1",
-              "role" => "anon"
+              "role" => role
             },
             id: UUID.uuid1(),
-            subscription_params: {"*", "public", "*", [], nil}
+            subscription_params: subscription_params
           }
           | acc
         ]

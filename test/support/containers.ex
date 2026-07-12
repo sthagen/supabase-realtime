@@ -157,12 +157,6 @@ defmodule Containers do
          port <- Container.port(container) do
       tenant = repo_run(mode, fn -> Generators.tenant_fixture(%{port: port, migrations_ran: 0}) end)
 
-      # TODO: REAL-818 - remove when Project Migrations v2 is done
-      Realtime.FeatureFlags.Cache.update_cache(%Realtime.Api.FeatureFlag{
-        name: "use_supabase_realtime_admin",
-        enabled: true
-      })
-
       run_migrations? = Keyword.get(opts, :run_migrations, false)
 
       {:ok, settings} = Database.from_tenant(tenant, "realtime_test", :stop)
@@ -226,7 +220,7 @@ defmodule Containers do
   defp repo_run(:unboxed, fun), do: Ecto.Adapters.SQL.Sandbox.unboxed_run(Realtime.Repo, fun)
   defp repo_run(:sandbox, fun), do: fun.()
 
-  defp reset_realtime_schema!(settings) do
+  defp reset_realtime_schema!(settings, attempts \\ 5) do
     {:ok, admin_conn} =
       Postgrex.start_link(
         hostname: settings.hostname,
@@ -236,11 +230,26 @@ defmodule Containers do
         password: settings.password
       )
 
-    Postgrex.query!(admin_conn, "DROP PUBLICATION IF EXISTS supabase_realtime_test", [])
-    Postgrex.query!(admin_conn, "DROP SCHEMA IF EXISTS realtime CASCADE", [])
-    Postgrex.query!(admin_conn, "CREATE SCHEMA realtime", [])
-    Postgrex.query!(admin_conn, "GRANT USAGE ON SCHEMA realtime TO postgres, anon, authenticated, service_role", [])
-    Postgrex.query!(admin_conn, "GRANT ALL ON SCHEMA realtime TO supabase_realtime_admin WITH GRANT OPTION", [])
+    try do
+      Postgrex.query!(admin_conn, "DROP PUBLICATION IF EXISTS supabase_realtime_test", [])
+      Postgrex.query!(admin_conn, "DROP SCHEMA IF EXISTS realtime CASCADE", [])
+      Postgrex.query!(admin_conn, "CREATE SCHEMA realtime", [])
+      Postgrex.query!(admin_conn, "GRANT USAGE ON SCHEMA realtime TO postgres, anon, authenticated, service_role", [])
+      Postgrex.query!(admin_conn, "GRANT ALL ON SCHEMA realtime TO supabase_realtime_admin WITH GRANT OPTION", [])
+    rescue
+      # Retry in case of OrioleDB OTablesMetaTranche LWLock
+      e in [Postgrex.Error, DBConnection.ConnectionError] ->
+        GenServer.stop(admin_conn)
+
+        if attempts > 1 do
+          Process.sleep(500)
+          reset_realtime_schema!(settings, attempts - 1)
+        else
+          reraise e, __STACKTRACE__
+        end
+    after
+      if Process.alive?(admin_conn), do: GenServer.stop(admin_conn)
+    end
   end
 
   def stop_containers() do
@@ -353,7 +362,7 @@ defmodule Containers do
         "-c",
         "wal_keep_size=32MB",
         "-c",
-        "max_wal_size=32MB",
+        "max_wal_size=1GB",
         "-c",
         "max_slot_wal_keep_size=32MB"
       ],
