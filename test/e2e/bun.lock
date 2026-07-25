@@ -11,7 +11,7 @@
         "@opentelemetry/resources": "^2.7.1",
         "@opentelemetry/sdk-trace-base": "^2.7.1",
         "@opentelemetry/semantic-conventions": "^1.41.1",
-        "@supabase/supabase-js": "2.110.1",
+        "@supabase/supabase-js": "2.110.8",
         "commander": "^14.0.3",
         "kleur": "^4.1.5",
       },
@@ -42,19 +42,19 @@
 
     "@opentelemetry/semantic-conventions": ["@opentelemetry/semantic-conventions@1.41.1", "", {}, "sha512-/UhIkaZgPutTFmQ7RnIJGgDXZmtEJ7Dvi86xNTFWcnRxVRNk/aotsqDJYeEvDP+FSMB2SdW+pQzNMcWP0rwuNA=="],
 
-    "@supabase/auth-js": ["@supabase/auth-js@2.110.1", "", { "dependencies": { "tslib": "2.8.1" } }, "sha512-8EJUoRoqzAYWkieHrLCrGrxs3cBbRB94xK8GzHe0aSLlSa4mt1enYLCiMgLiKJOF8GNYeX6PLTBNef0XAhILgw=="],
+    "@supabase/auth-js": ["@supabase/auth-js@2.110.8", "", { "dependencies": { "tslib": "2.8.1" } }, "sha512-TQ5neTUDX2C2WmyYa03yGhLMkhdE/SkHXtK8/qxO/APUy3rsymsJCBP48p4jcN6iO2G0ow6RRexQd2mX+dSyJg=="],
 
-    "@supabase/functions-js": ["@supabase/functions-js@2.110.1", "", { "dependencies": { "tslib": "2.8.1" } }, "sha512-Pm9HD9Qth6zQO0aOGZ3DxYb6QlCzrkTkP6eUEOvhTlbvcvYRDSCZXIJ5dkDLpqxD+gdrXfWDFOpU9BpRKYjsIQ=="],
+    "@supabase/functions-js": ["@supabase/functions-js@2.110.8", "", { "dependencies": { "tslib": "2.8.1" } }, "sha512-5yB9TLYzvv2oSQxwb0gamEvIAsuH66pVt7AM/pz03S7wN6ehD34GNgbShrccetqPedXQSz7e/1hAJ9NeEhoZVg=="],
 
-    "@supabase/phoenix": ["@supabase/phoenix@0.4.4", "", {}, "sha512-Gt0pqoXuIqX/8dvG0OKp/wMCobXNH3klNbUPBNyOfN0YA1IswrM3HyWFMOPk1Jy+BRaIyDPcFx4jLBwHNmlyfQ=="],
+    "@supabase/phoenix": ["@supabase/phoenix@0.4.5", "", {}, "sha512-aAn9H9ovVyeApKy11OWOrrOGq8DV68yWeH4ud2lN9fzn4aO8Zb5GLL9m1pUg9nLqIcT+ZDfAcsZe0E/nqdv2lw=="],
 
-    "@supabase/postgrest-js": ["@supabase/postgrest-js@2.110.1", "", { "dependencies": { "tslib": "2.8.1" } }, "sha512-BILNhS40oGlP2bn/VJjh/1hCyrWNMmpGZGcCrPvqd5R3s8gf8Bd5qyKoHZdMwTKynGCuJGjagRXa069abhibMw=="],
+    "@supabase/postgrest-js": ["@supabase/postgrest-js@2.110.8", "", { "dependencies": { "tslib": "2.8.1" } }, "sha512-QeRROxl1PpOZw5Jzi7BwdN9icsycMrLlCCvsjS0hYLW+nZoaT46zdagz/glJirj8jHF4jSd5Jyipuae2cBClCw=="],
 
-    "@supabase/realtime-js": ["@supabase/realtime-js@2.110.1", "", { "dependencies": { "@supabase/phoenix": "0.4.4", "tslib": "2.8.1" } }, "sha512-JmWCpMoe2iJPNrXIdHqIvf2Mie6NfSuWHS9Ve6YCmLkn1mNl3vrK3a67IukJ5lPjgmAzB+jFagyMz2oSIX+Xnw=="],
+    "@supabase/realtime-js": ["@supabase/realtime-js@2.110.8", "", { "dependencies": { "@supabase/phoenix": "0.4.5", "tslib": "2.8.1" } }, "sha512-mwX7ituX6O31fLf+0g65rpLlNxqgnMaPltPsQwzox6jfmbfVl3tCxXrfr3HEsQcCRjpjuJG1+A0vFzP1yVjKHA=="],
 
-    "@supabase/storage-js": ["@supabase/storage-js@2.110.1", "", { "dependencies": { "iceberg-js": "^0.8.1", "tslib": "2.8.1" } }, "sha512-UqJGzhFMiIRBe8vT7a6ZtrN2U5YufH4Tk9nyc9KKfa2TUtV11BkSg/v3lyy/c4A8SbekVH3UywTF0s42zpF4zw=="],
+    "@supabase/storage-js": ["@supabase/storage-js@2.110.8", "", { "dependencies": { "iceberg-js": "^0.8.1", "tslib": "2.8.1" } }, "sha512-CcfhkZFBLxsthgUabZKxwfsoXdrikIGsL3LsGoV3FZTqCMx/s1y49taT4jT/oya5+1IuB0sFFHw6pF0o0iJniQ=="],
 
-    "@supabase/supabase-js": ["@supabase/supabase-js@2.110.1", "", { "dependencies": { "@supabase/auth-js": "2.110.1", "@supabase/functions-js": "2.110.1", "@supabase/postgrest-js": "2.110.1", "@supabase/realtime-js": "2.110.1", "@supabase/storage-js": "2.110.1" } }, "sha512-MiJh0THZgyAvTWm91FOLknjH5dYjXRKOdxpuUsyTVZVXIf7FxCShzevIm4KGCubHRU2n25Gyt8PhTXIFzcD9FA=="],
+    "@supabase/supabase-js": ["@supabase/supabase-js@2.110.8", "", { "dependencies": { "@supabase/auth-js": "2.110.8", "@supabase/functions-js": "2.110.8", "@supabase/postgrest-js": "2.110.8", "@supabase/realtime-js": "2.110.8", "@supabase/storage-js": "2.110.8" } }, "sha512-E5qzoe74zhJRv4wRcbO9eMYzeQDb/+h6c603pL8shcxLGBjTKsIF7XXj05IcNj23TLDgJN1WkMw7mwAPyu5dZg=="],
 
     "commander": ["commander@14.0.3", "", {}, "sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw=="],
 
