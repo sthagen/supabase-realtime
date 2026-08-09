@@ -1,10 +1,10 @@
-ARG ELIXIR_VERSION=1.18
-ARG OTP_VERSION=27.3
-ARG DEBIAN_VERSION=bookworm-20250929-slim
+ARG ELIXIR_VERSION=1.19.5
+ARG OTP_VERSION=28.5.0.4
+ARG DEBIAN_VERSION=trixie-20260713-slim
 ARG BUILDER_IMAGE="hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-debian-${DEBIAN_VERSION}"
 ARG RUNNER_IMAGE="debian:${DEBIAN_VERSION}"
-# @supabase/pg-delta@1.0.0-alpha.30
-ARG PG_DELTA_COMMIT=d706336a6772318e92db419eda5a5ea51123510e
+# @supabase/pg-delta@1.0.0-alpha.33
+ARG PG_DELTA_COMMIT=c0e5e002eb712faf46dd1660d5578357f21af950
 
 FROM debian:${DEBIAN_VERSION} AS pgdelta-builder
 ARG PG_DELTA_COMMIT
@@ -111,7 +111,7 @@ ENV SLOT_NAME_SUFFIX="${SLOT_NAME_SUFFIX}" \
 
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
-      libstdc++6 openssl libncurses5 locales iptables sudo tini curl awscli jq xz-utils && \
+      libstdc++6 openssl libncurses6 locales iptables sudo tini curl awscli jq xz-utils && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 COPY --from=pgdelta-builder /tmp/pgdelta.xz /usr/local/share/pgdelta/pgdelta.xz
