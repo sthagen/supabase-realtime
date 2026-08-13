@@ -9,6 +9,7 @@ defmodule RealtimeWeb.RealtimeChannel do
 
   alias Forum.Muster
 
+  alias Realtime.Api.Message
   alias Realtime.Api.Tenant
   alias Realtime.Crypto
   alias Realtime.FeatureFlags
@@ -157,9 +158,11 @@ defmodule RealtimeWeb.RealtimeChannel do
       if presence_enabled?, do: send(self(), :sync_presence)
 
       UsersCounter.add(transport_pid, tenant_id)
-      await_muster_join(muster_join_task, socket)
 
-      {:ok, state, assign(socket, assigns)}
+      case await_muster_join(muster_join_task, socket) do
+        :ok -> {:ok, state, assign(socket, assigns)}
+        {:error, _} = error -> error
+      end
     else
       {:error, :expired_token, msg} ->
         maybe_log_warning(socket, "InvalidJWTToken", msg)
@@ -280,9 +283,7 @@ defmodule RealtimeWeb.RealtimeChannel do
   def handle_info({:replay, messages}, socket) do
     for message <- messages do
       meta = %{"replayed" => true, "id" => message.id}
-      payload = %{"payload" => message.payload, "event" => message.event, "type" => "broadcast", "meta" => meta}
-
-      push(socket, "broadcast", payload)
+      replay(message, meta, socket)
     end
 
     {:noreply, socket}
@@ -724,8 +725,6 @@ defmodule RealtimeWeb.RealtimeChannel do
       {:exit, reason} -> log_error(socket, "MusterJoinError", inspect(reason))
       nil -> log_error(socket, "MusterJoinError", "timed out after #{@muster_join_await_ms}ms")
     end
-
-    :ok
   end
 
   defp limit_max_users(tenant, transport_pid) do
@@ -1094,6 +1093,21 @@ defmodule RealtimeWeb.RealtimeChannel do
   end
 
   defp maybe_replay_messages(_, _, _, _, _), do: {:ok, MapSet.new()}
+
+  # V1 sockets are unable to represent binary payloads
+  defp replay(%Message{binary_payload: binary_payload}, _meta, %{serializer: Phoenix.Socket.V1.JSONSerializer})
+       when is_binary(binary_payload) do
+    :ok
+  end
+
+  defp replay(%Message{binary_payload: binary_payload, event: event}, meta, socket) when is_binary(binary_payload) do
+    push(socket, "broadcast", {event, :binary, binary_payload, meta})
+  end
+
+  defp replay(%Message{} = message, meta, socket) do
+    payload = %{"payload" => message.payload, "event" => message.event, "type" => "broadcast", "meta" => meta}
+    push(socket, "broadcast", payload)
+  end
 
   defp presence_enabled?(client_enabled?, %Tenant{presence_enabled: tenant_enabled}) do
     client_enabled? || tenant_enabled

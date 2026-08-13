@@ -5,11 +5,11 @@ defmodule Realtime.Tenants.SchemaTest do
   # - tag `@describetag :requires_no_supautils_policy_grants` represents older images where schema restrictions can't be applied
   # - untagged tests assert behaviour on every version
 
-  use Realtime.DataCase, async: false
+  use Realtime.DataCase, async: true
   alias Realtime.Database
 
   setup do
-    tenant = Containers.checkout_tenant(run_migrations: true)
+    tenant = TestTenantDb.checkout_tenant(run_migrations: true)
     {:ok, settings} = Database.from_tenant(tenant, "realtime_test", :stop)
     opts = settings |> Map.from_struct() |> Keyword.new()
 

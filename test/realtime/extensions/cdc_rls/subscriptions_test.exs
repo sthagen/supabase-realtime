@@ -8,8 +8,8 @@ defmodule Realtime.Extensions.PostgresCdcRls.SubscriptionsTest do
   alias Extensions.PostgresCdcRls.Subscriptions
   alias Realtime.Database
 
-  setup do
-    tenant = Containers.checkout_tenant(run_migrations: true)
+  defp setup_tenant(_) do
+    tenant = TestTenantDb.checkout_tenant(run_migrations: true)
 
     {:ok, db_settings} = Database.from_tenant(tenant, "realtime_rls")
 
@@ -373,6 +373,8 @@ defmodule Realtime.Extensions.PostgresCdcRls.SubscriptionsTest do
   end
 
   describe "filters: persisting to the subscription row" do
+    setup :setup_tenant
+
     test "filters are stored in the filters column", %{conn: conn} do
       {:ok, subscription_params} =
         Subscriptions.parse_subscription_params(%{
@@ -486,6 +488,8 @@ defmodule Realtime.Extensions.PostgresCdcRls.SubscriptionsTest do
   end
 
   describe "filters: gating rows end to end (apply_rls)" do
+    setup :setup_tenant
+
     test "apply_rls honours a like filter end to end", %{conn: conn} do
       visible_id = UUID.uuid1()
       hidden_id = UUID.uuid1()
@@ -630,6 +634,8 @@ defmodule Realtime.Extensions.PostgresCdcRls.SubscriptionsTest do
   end
 
   describe "subscribing to table changes" do
+    setup :setup_tenant
+
     test "user can subscribe to all events on all tables in a schema", %{conn: conn} do
       {:ok, subscription_params} =
         Subscriptions.parse_subscription_params(%{"event" => "*", "schema" => "public"})
@@ -822,8 +828,17 @@ defmodule Realtime.Extensions.PostgresCdcRls.SubscriptionsTest do
         Postgrex.query!(conn, "select count(*) from realtime.subscription", [])
     end
 
-    test "create works for a table whose name contains a backslash", %{conn: conn} do
-      Postgrex.query!(conn, ~s|CREATE TABLE "my\\table" (id int)|, [])
+    test "create works for a table whose name contains a backslash", %{conn: conn, tenant: tenant} do
+      on_exit(fn ->
+        {:ok, db_settings} = Database.from_tenant(tenant, "realtime_rls")
+
+        {:ok, cleanup_conn} =
+          db_settings |> Map.from_struct() |> Keyword.new() |> Postgrex.start_link()
+
+        Postgrex.query!(cleanup_conn, ~s|DROP TABLE IF EXISTS "my\\table"|, [])
+      end)
+
+      Postgrex.query!(conn, ~s|CREATE TABLE IF NOT EXISTS "my\\table" (id int)|, [])
       Postgrex.query!(conn, ~s|GRANT ALL ON "my\\table" TO anon|, [])
 
       {:ok, subscription_params} =
@@ -928,6 +943,8 @@ defmodule Realtime.Extensions.PostgresCdcRls.SubscriptionsTest do
   end
 
   describe "delete_all/1" do
+    setup :setup_tenant
+
     test "delete_all", %{conn: conn} do
       create_subscriptions(conn, 10)
       assert :ok = Subscriptions.delete_all(conn)
@@ -948,6 +965,8 @@ defmodule Realtime.Extensions.PostgresCdcRls.SubscriptionsTest do
   end
 
   describe "delete/2" do
+    setup :setup_tenant
+
     test "returns error when subscription table is dropped", %{conn: conn} do
       Postgrex.query!(conn, "drop table if exists realtime.subscription cascade", [])
 
@@ -979,6 +998,8 @@ defmodule Realtime.Extensions.PostgresCdcRls.SubscriptionsTest do
   end
 
   describe "delete_multi/2" do
+    setup :setup_tenant
+
     test "delete_multi", %{conn: conn} do
       Subscriptions.delete_all(conn)
       id1 = UUID.uuid1()
@@ -1008,6 +1029,8 @@ defmodule Realtime.Extensions.PostgresCdcRls.SubscriptionsTest do
   end
 
   describe "delete_all_if_table_exists/1" do
+    setup :setup_tenant
+
     test "delete_all_if_table_exists", %{conn: conn} do
       Subscriptions.delete_all(conn)
       create_subscriptions(conn, 10)
@@ -1066,6 +1089,8 @@ defmodule Realtime.Extensions.PostgresCdcRls.SubscriptionsTest do
   end
 
   describe "fetch_publication_tables/2" do
+    setup :setup_tenant
+
     test "returns {:ok, tables} for an existing publication", %{conn: conn} do
       assert {:ok, tables} = Subscriptions.fetch_publication_tables(conn, "supabase_realtime_test")
       assert tables[{"*"}] != nil
@@ -1082,6 +1107,8 @@ defmodule Realtime.Extensions.PostgresCdcRls.SubscriptionsTest do
   end
 
   describe "existing subscriptions without column selection continue to receive full payloads" do
+    setup :setup_tenant
+
     test "omitting select returns all columns (no behavior change for existing clients)" do
       assert {:ok, {"*", "public", "messages", [], nil}} =
                Subscriptions.parse_subscription_params(%{
@@ -1153,7 +1180,7 @@ defmodule Realtime.Extensions.PostgresCdcRls.SubscriptionsTest do
     end
   end
 
-  describe "subscribing with column selection (select param)" do
+  describe "subscribing with column selection (select param) - parse" do
     test "user can pass a list of column names to limit the payload" do
       assert {:ok, {"*", "public", "messages", [], ["id", "details"]}} =
                Subscriptions.parse_subscription_params(%{
@@ -1203,6 +1230,31 @@ defmodule Realtime.Extensions.PostgresCdcRls.SubscriptionsTest do
                  "select" => ["id", "details"]
                })
     end
+
+    test "user gets an error when using select with a schema-only (wildcard table) subscription" do
+      assert {:error, msg} =
+               Subscriptions.parse_subscription_params(%{
+                 "schema" => "public",
+                 "select" => ["id"]
+               })
+
+      assert msg =~ "wildcard"
+    end
+
+    test "user gets an error when using select with an explicit wildcard table" do
+      assert {:error, msg} =
+               Subscriptions.parse_subscription_params(%{
+                 "schema" => "public",
+                 "table" => "*",
+                 "select" => ["id"]
+               })
+
+      assert msg =~ "wildcard"
+    end
+  end
+
+  describe "subscribing with column selection (select param) - create" do
+    setup :setup_tenant
 
     test "selected columns are stored in normalized (sorted) order in the database", %{
       conn: conn
@@ -1298,30 +1350,11 @@ defmodule Realtime.Extensions.PostgresCdcRls.SubscriptionsTest do
       assert %Postgrex.Result{rows: [[0]]} =
                Postgrex.query!(conn, "select count(*) from realtime.subscription", [])
     end
-
-    test "user gets an error when using select with a schema-only (wildcard table) subscription" do
-      assert {:error, msg} =
-               Subscriptions.parse_subscription_params(%{
-                 "schema" => "public",
-                 "select" => ["id"]
-               })
-
-      assert msg =~ "wildcard"
-    end
-
-    test "user gets an error when using select with an explicit wildcard table" do
-      assert {:error, msg} =
-               Subscriptions.parse_subscription_params(%{
-                 "schema" => "public",
-                 "table" => "*",
-                 "select" => ["id"]
-               })
-
-      assert msg =~ "wildcard"
-    end
   end
 
   describe "regression tests" do
+    setup :setup_tenant
+
     test "list_changes succeeds for custom roles without execution grants (issue #2001 with non-builtin role)",
          %{conn: conn, tenant: tenant} do
       {:ok, admin_settings} = Database.from_tenant(tenant, "realtime_test", :stop)
