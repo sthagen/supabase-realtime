@@ -88,16 +88,16 @@ defmodule RealtimeWeb.TenantControllerTest do
 
       [%{"settings" => settings}] = json_response(conn, 201)["data"]["extensions"]
 
-      assert Crypto.encrypt!("127.0.0.1") == settings["db_host"]
-      assert Crypto.encrypt!("postgres") == settings["db_name"]
-      assert Crypto.encrypt!("supabase_admin") == settings["db_user"]
+      assert Crypto.decrypt!(settings["db_host"]) == "127.0.0.1"
+      assert Crypto.decrypt!(settings["db_name"]) == "postgres"
+      assert Crypto.decrypt!(settings["db_user"]) == "supabase_admin"
       refute settings["db_password"]
       Process.sleep(100)
 
       %{broadcast_adapter: :gen_rpc, extensions: [%{settings: settings}]} =
         tenant = Tenants.get_tenant_by_external_id(external_id)
 
-      assert Crypto.encrypt!("postgres") == settings["db_password"]
+      assert Crypto.decrypt!(settings["db_password"]) == "postgres"
 
       assert tenant.migrations_ran > 0
     end
@@ -117,14 +117,14 @@ defmodule RealtimeWeb.TenantControllerTest do
       assert %{"id" => _id, "external_id" => ^external_id} = json_response(conn, 201)["data"]
       [%{"settings" => settings}] = json_response(conn, 201)["data"]["extensions"]
 
-      assert Crypto.encrypt!("127.0.0.1") == settings["db_host"]
-      assert Crypto.encrypt!("postgres") == settings["db_name"]
-      assert Crypto.encrypt!("supabase_admin") == settings["db_user"]
+      assert Crypto.decrypt!(settings["db_host"]) == "127.0.0.1"
+      assert Crypto.decrypt!(settings["db_name"]) == "postgres"
+      assert Crypto.decrypt!(settings["db_user"]) == "supabase_admin"
       refute settings["db_password"]
       Process.sleep(100)
       %{extensions: [%{settings: settings}]} = tenant = Tenants.get_tenant_by_external_id(external_id)
 
-      assert Crypto.encrypt!("postgres") == settings["db_password"]
+      assert Crypto.decrypt!(settings["db_password"]) == "postgres"
       assert tenant.migrations_ran > 0
     end
   end
@@ -307,7 +307,10 @@ defmodule RealtimeWeb.TenantControllerTest do
       {:ok, _pid} = Connect.lookup_or_start_connection(tenant.external_id)
 
       assert Connect.ready?(tenant.external_id)
-      assert Realtime.Tenants.ReplicationConnection.ready?(tenant.external_id)
+
+      # Replication Connections are launched async and can take a while,
+      # especially in CI environments.
+      assert eventually(fn -> Realtime.Tenants.ReplicationConnection.ready?(tenant.external_id) end)
 
       assert Cache.get_tenant_by_external_id(tenant.external_id)
       {:ok, db_conn} = Database.connect(tenant, "realtime_test", :stop)

@@ -1,3 +1,15 @@
+--
+-- Auto-generated. Do not edit.
+--
+-- Tenant `realtime` schema for Postgres 17
+--
+-- Beyond priv/repo/tenant_schema it also:
+--   - creates the supabase_realtime_admin role
+--   - creates realtime.schema_migrations and records every applied version
+--   - sets ALTER DEFAULT PRIVILEGES and the dashboard_user/postgres grants
+--
+-- See Mix.Tasks.Realtime.ExportTenantDbDump
+--
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'supabase_realtime_admin') THEN
@@ -17,7 +29,7 @@ END $$;
 
 
 -- Dumped from database version 17.6
--- Dumped by pg_dump version 17.10 (Ubuntu 17.10-1.pgdg24.04+1)
+-- Dumped by pg_dump version 17.11 (Ubuntu 17.11-1.pgdg24.04+2)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -1062,7 +1074,8 @@ CREATE TABLE realtime.messages (
     updated_at timestamp without time zone DEFAULT now() NOT NULL,
     inserted_at timestamp without time zone DEFAULT now() NOT NULL,
     id uuid DEFAULT gen_random_uuid() NOT NULL,
-    binary_payload bytea
+    binary_payload bytea,
+    skip_broadcast boolean DEFAULT false NOT NULL
 )
 PARTITION BY RANGE (inserted_at);
 
@@ -1485,3 +1498,4 @@ INSERT INTO realtime."schema_migrations" (version) VALUES (20260626120000);
 INSERT INTO realtime."schema_migrations" (version) VALUES (20260706120000);
 INSERT INTO realtime."schema_migrations" (version) VALUES (20260707120000);
 INSERT INTO realtime."schema_migrations" (version) VALUES (20260709120000);
+INSERT INTO realtime."schema_migrations" (version) VALUES (20260714120000);

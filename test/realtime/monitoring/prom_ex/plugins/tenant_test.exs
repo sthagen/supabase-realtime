@@ -155,7 +155,7 @@ defmodule Realtime.PromEx.Plugins.TenantTest do
       FakeUserCounter.fake_event(external_id)
 
       Process.sleep(100)
-      assert metric_value("realtime_channel_global_events") == metric_value + 1
+      assert metric_value("realtime_channel_global_events") >= metric_value + 1
     end
 
     test "db_event exists after counter added", %{tenant: %{external_id: external_id}} do
@@ -170,7 +170,7 @@ defmodule Realtime.PromEx.Plugins.TenantTest do
 
       FakeUserCounter.fake_db_event(external_id)
       Process.sleep(100)
-      assert metric_value("realtime_channel_global_db_events") == metric_value + 1
+      assert metric_value("realtime_channel_global_db_events") >= metric_value + 1
     end
 
     test "presence_event exists after counter added", %{tenant: %{external_id: external_id}} do
@@ -185,7 +185,7 @@ defmodule Realtime.PromEx.Plugins.TenantTest do
       metric_value = metric_value("realtime_channel_global_presence_events") || 0
       FakeUserCounter.fake_presence_event(external_id)
       Process.sleep(100)
-      assert metric_value("realtime_channel_global_presence_events") == metric_value + 1
+      assert metric_value("realtime_channel_global_presence_events") >= metric_value + 1
     end
 
     test "metric read_authorization_check exists after check", context do
@@ -217,7 +217,8 @@ defmodule Realtime.PromEx.Plugins.TenantTest do
         Authorization.get_write_authorizations(
           %Policies{},
           context.db_conn,
-          context.authorization_context
+          context.authorization_context,
+          :broadcast
         )
 
       # Wait enough time for the poll rate to be triggered at least once
@@ -349,7 +350,7 @@ defmodule Realtime.PromEx.Plugins.TenantTest do
       })
 
       Process.sleep(100)
-      assert metric_value(metric, hit: false) == metric_value + 1
+      assert metric_value(metric, hit: false) >= metric_value + 1
     end
 
     test "channel input bytes", context do

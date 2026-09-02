@@ -21,6 +21,7 @@ defmodule RealtimeWeb.RealtimeChannel.PresenceHandlerTest do
   setup [:initiate_tenant]
 
   describe "is_private?/1" do
+    @describetag without_db: true
     defmodule TestIsPrivate do
       import RealtimeWeb.RealtimeChannel.PresenceHandler
 
@@ -40,6 +41,7 @@ defmodule RealtimeWeb.RealtimeChannel.PresenceHandlerTest do
   end
 
   describe "can_read_presence?/1" do
+    @describetag without_db: true
     defmodule TestCanReadPresence do
       import RealtimeWeb.RealtimeChannel.PresenceHandler
 
@@ -71,6 +73,7 @@ defmodule RealtimeWeb.RealtimeChannel.PresenceHandlerTest do
   end
 
   describe "can_write_presence?/1" do
+    @describetag without_db: true
     defmodule TestCanWritePresence do
       import RealtimeWeb.RealtimeChannel.PresenceHandler
 
@@ -253,11 +256,10 @@ defmodule RealtimeWeb.RealtimeChannel.PresenceHandlerTest do
 
     @tag policies: [:authenticated_read_broadcast_and_presence, :authenticated_write_broadcast_and_presence]
     test "only checks write policies once on private channels", %{tenant: tenant, topic: topic, db_conn: db_conn} do
-      expect(Authorization, :get_write_authorizations, 1, fn conn, db_conn, auth_context, opts ->
-        call_original(Authorization, :get_write_authorizations, [conn, db_conn, auth_context, opts])
+      expect(Authorization, :get_write_authorizations, 1, fn conn, db_conn, auth_context, extension ->
+        assert extension == :presence
+        call_original(Authorization, :get_write_authorizations, [conn, db_conn, auth_context, extension])
       end)
-
-      reject(&Authorization.get_write_authorizations/3)
 
       key = random_string()
       # Use high client rate limit to test tenant-level rate limiting
@@ -277,6 +279,28 @@ defmodule RealtimeWeb.RealtimeChannel.PresenceHandlerTest do
           assert_receive %Broadcast{topic: ^topic, event: "presence_diff"}
           socket
       end
+    end
+
+    @tag policies: [:authenticated_read_presence, :authenticated_write_presence]
+    test "leaves broadcast write policy unevaluated when tracking presence", %{
+      tenant: tenant,
+      topic: topic,
+      db_conn: db_conn
+    } do
+      key = random_string()
+      socket = socket_fixture(tenant, topic, key)
+
+      assert {:ok, socket} =
+               PresenceHandler.handle(
+                 %{"event" => "track", "payload" => %{"metadata" => random_string()}},
+                 db_conn,
+                 socket
+               )
+
+      assert %Policies{
+               broadcast: %BroadcastPolicies{write: nil},
+               presence: %PresencePolicies{write: true}
+             } = socket.assigns.policies
     end
 
     test "increase_connection_pool from write authorization returns error and does not log UnableToSetPolicies",
@@ -301,8 +325,9 @@ defmodule RealtimeWeb.RealtimeChannel.PresenceHandlerTest do
 
     @tag policies: [:authenticated_read_broadcast_and_presence, :broken_write_presence]
     test "handle failing rls policy", %{tenant: tenant, topic: topic, db_conn: db_conn} do
-      expect(Authorization, :get_write_authorizations, 1, fn conn, db_conn, auth_context, opts ->
-        call_original(Authorization, :get_write_authorizations, [conn, db_conn, auth_context, opts])
+      expect(Authorization, :get_write_authorizations, 1, fn conn, db_conn, auth_context, extension ->
+        assert extension == :presence
+        call_original(Authorization, :get_write_authorizations, [conn, db_conn, auth_context, extension])
       end)
 
       key = random_string()
@@ -325,7 +350,7 @@ defmodule RealtimeWeb.RealtimeChannel.PresenceHandlerTest do
     end
 
     test "does not check write policies once on public channels", %{tenant: tenant, topic: topic} do
-      reject(&Authorization.get_write_authorizations/3)
+      reject(&Authorization.get_write_authorizations/4)
 
       key = random_string()
       policies = %Policies{broadcast: %BroadcastPolicies{read: false}}
@@ -598,6 +623,7 @@ defmodule RealtimeWeb.RealtimeChannel.PresenceHandlerTest do
   end
 
   describe "per-client rate limiting" do
+    @describetag without_db: true
     test "allows calls under the limit", %{tenant: tenant, topic: topic} do
       client_rate_limit = %{max_calls: 10, window_ms: 60_000, counter: 0, reset_at: nil}
       socket = socket_fixture(tenant, topic, random_string(), private?: false, client_rate_limit: client_rate_limit)
@@ -771,6 +797,16 @@ defmodule RealtimeWeb.RealtimeChannel.PresenceHandlerTest do
       assert {:ok, _socket} =
                PresenceHandler.handle(%{"event" => "track", "payload" => %{"call" => random_string()}}, nil, socket)
     end
+  end
+
+  # Guard-clause and per-client rate-limiting tests only inspect the socket struct, so they
+  # need a tenant struct but neither a migrated database nor a live Connect. Skip that setup.
+  defp initiate_tenant(%{without_db: true}) do
+    tenant = tenant_fixture()
+    # Warm cache to avoid Cachex and Ecto.Sandbox ownership issues
+    Realtime.Tenants.Cache.update_cache(tenant)
+
+    {:ok, tenant: tenant, topic: random_string()}
   end
 
   defp initiate_tenant(context) do

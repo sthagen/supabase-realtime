@@ -8,6 +8,7 @@ defmodule Realtime.Tenants.ConnectTest do
   import ExUnit.CaptureLog
 
   alias Realtime.Database
+  alias Realtime.Env
   alias Realtime.Tenants
   alias Realtime.Tenants.Connect
   alias Realtime.Tenants.Rebalancer
@@ -200,12 +201,12 @@ defmodule Realtime.Tenants.ConnectTest do
       assert_receive {:ok, ^pid}
     end
 
-    test "more than 15 seconds passed error out", %{tenant: tenant} do
+    test "more than the connection ready timeout passed error out", %{tenant: tenant} do
       parent = self()
 
-      # Let's slow down Connect starting
+      # Slow down Connect starting so it takes longer than the connection ready timeout
       expect(Database, :check_tenant_connection, fn t, listeners ->
-        Process.sleep(15500)
+        Process.sleep(3000)
         call_original(Database, :check_tenant_connection, [t, listeners])
       end)
 
@@ -215,7 +216,7 @@ defmodule Realtime.Tenants.ConnectTest do
       spawn(connect)
 
       {:error, :initializing} = Connect.lookup_or_start_connection(tenant.external_id)
-      # The above call waited 15 seconds
+      # The above call waited for the connection ready timeout
       assert_receive {:error, :initializing}
       assert_receive {:error, :initializing}
 
@@ -340,7 +341,7 @@ defmodule Realtime.Tenants.ConnectTest do
     end
 
     test "if tenant exists but unable to connect, returns error" do
-      port = Generators.port()
+      port = Env.unused_port()
 
       extensions = [
         %{

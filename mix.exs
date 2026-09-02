@@ -4,16 +4,21 @@ defmodule Realtime.MixProject do
   def project do
     [
       app: :realtime,
-      version: "2.126.0",
+      version: "2.134.0",
       elixir: "~> 1.19",
       elixirc_paths: elixirc_paths(Mix.env()),
+      compilers: [:phoenix_live_view] ++ Mix.compilers(),
+      listeners: [Phoenix.CodeReloader],
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
       dialyzer: dialyzer(),
       test_coverage: [tool: ExCoveralls],
       hex: [
-        ignore_advisories: ["CVE-2026-43969", "CVE-2026-43966"]
+        # Can be overridden via `HEX_COOLDOWN=0d` should you want to, see DEVELOPERS.md#dependency-cooldown
+        cooldown: "7d",
+        # These are all cowlib, have no released fixes as of now but also shouldn't impact us.
+        ignore_advisories: ["CVE-2026-43969", "CVE-2026-43966", "CVE-2026-43971"]
       ],
       releases: [
         realtime: [
@@ -57,13 +62,13 @@ defmodule Realtime.MixProject do
   defp deps do
     [
       phoenix_dep(),
-      {:phoenix_ecto, "~> 4.4.0"},
+      {:phoenix_ecto, "~> 4.7.0"},
       {:ecto_sql, "~> 3.11"},
       {:ecto_psql_extras, "~> 0.8"},
       {:postgrex, "~> 0.22"},
       {:db_connection, "~> 2.10"},
       {:phoenix_html, "~> 3.2"},
-      {:phoenix_live_view, "~> 0.18"},
+      {:phoenix_live_view, "~> 1.0"},
       {:phoenix_live_reload, "~> 1.2", only: :dev},
       {:phoenix_live_dashboard, "~> 0.7"},
       {:phoenix_view, "~> 2.0"},
@@ -73,7 +78,7 @@ defmodule Realtime.MixProject do
        github: "tailwindlabs/heroicons", tag: "v2.1.1", sparse: "optimized", app: false, compile: false, depth: 1},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
-      {:gettext, "~> 0.19"},
+      {:gettext, "~> 1.0"},
       {:jason, "~> 1.3"},
       {:plug_cowboy, "~> 2.8"},
       {:libcluster, "~> 3.3"},
@@ -107,9 +112,10 @@ defmodule Realtime.MixProject do
       {:req, "~> 0.6.2"},
       {:mimic, "~> 2.0", only: :test},
       {:floki, ">= 0.30.0", only: :test},
+      {:lazy_html, ">= 0.1.0", only: :test},
       {:mint_web_socket, "~> 1.0", only: :test},
       {:postgres_replication, git: "https://github.com/filipecabaco/postgres_replication.git", only: :test},
-      {:benchee, "~> 1.1.0", only: [:dev, :test]},
+      {:benchee, "~> 1.5.1", only: [:dev, :test]},
       {:excoveralls, "~> 0.18", only: [:dev, :test], runtime: false},
       {:ex_crap, "~> 0.1", only: [:dev, :test], runtime: false},
       {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false},
@@ -124,7 +130,13 @@ defmodule Realtime.MixProject do
     if path = System.get_env("PHOENIX_PATH") do
       {:phoenix, path: path, override: true}
     else
-      {:phoenix, override: true, github: "supabase/phoenix", branch: "feat/presence-custom-dispatcher-1.7.19"}
+      # Phoenix 1.8.3 introduces a bugfix/regression as previous versions allowed missing `join_ref`
+      # This would break some SDK clients.
+      # Wait until they are fixed + some grace period to upgrade.
+      # We're running phoenix 1.8.11 from a fork here with the bugfix removed as to give us some
+      # more lenience to update while resolving the CVEs.
+      # REAL-981
+      {:phoenix, "~> 1.8", github: "supabase/phoenix", branch: "v1.8-no-drop-missing-join-refs", override: true}
     end
   end
 
@@ -136,7 +148,8 @@ defmodule Realtime.MixProject do
   # See the documentation for `Mix` for more info on aliases.
   defp aliases do
     [
-      setup: ["deps.get", "ecto.setup", "cmd npm install --prefix assets"],
+      # Databases, migrations and the seed tenant come from `mise run db-start`.
+      setup: ["deps.get", "cmd npm install --prefix assets"],
       "ecto.setup": ["ecto.create", "ecto.migrate", "seed"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       seed: ["run priv/repo/dev_seeds.exs"],

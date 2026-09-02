@@ -3,8 +3,8 @@ ARG OTP_VERSION=28.5.0.4
 ARG DEBIAN_VERSION=trixie-20260713-slim
 ARG BUILDER_IMAGE="hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-debian-${DEBIAN_VERSION}"
 ARG RUNNER_IMAGE="debian:${DEBIAN_VERSION}"
-# @supabase/pg-delta@1.0.0-alpha.33
-ARG PG_DELTA_COMMIT=c0e5e002eb712faf46dd1660d5578357f21af950
+# @supabase/pg-delta@1.0.0-alpha.48
+ARG PG_DELTA_COMMIT=107ac3df4b889c527215d1f6a37df64b33154c16
 
 FROM debian:${DEBIAN_VERSION} AS pgdelta-builder
 ARG PG_DELTA_COMMIT
@@ -20,11 +20,12 @@ RUN set -eux; \
       | tar xz --strip-components=1; \
     bun install --frozen-lockfile --ignore-scripts; \
     cd /build/packages/pg-delta; \
-    bun build --compile src/cli/bin/cli.ts --outfile /tmp/pgdelta; \
+    bun build --compile src/cli/main.ts --outfile /tmp/pgdelta; \
     /tmp/pgdelta --help > /dev/null; \
     xz -9 -e -T0 -c /tmp/pgdelta > /tmp/pgdelta.xz; \
-    cd / && find build -path '*/@libpg-query/parser/wasm/libpg-query.wasm' \
-      | tar -czf /tmp/libpg-query.tar.gz -T -; \
+    cd / && find build -path '*/@libpg-query/parser/wasm/libpg-query.wasm' > /tmp/libpg-query.txt; \
+    test -s /tmp/libpg-query.txt; \
+    tar -czf /tmp/libpg-query.tar.gz -T /tmp/libpg-query.txt; \
     printf '%s\n' \
       '#!/bin/sh' \
       'set -e' \
@@ -37,7 +38,7 @@ RUN set -eux; \
       'exec "$BIN" "$@"' \
       > /tmp/pgdelta-wrapper; \
     chmod +x /tmp/pgdelta-wrapper; \
-    rm -rf /tmp/pgdelta /build /root/.bun /var/lib/apt/lists/*
+    rm -rf /tmp/pgdelta /tmp/libpg-query.txt /build /root/.bun /var/lib/apt/lists/*
 
 FROM ${BUILDER_IMAGE} AS builder
 

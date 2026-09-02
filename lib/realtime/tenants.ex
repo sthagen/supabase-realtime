@@ -11,6 +11,7 @@ defmodule Realtime.Tenants do
   alias Realtime.Repo.Replica
   alias Realtime.Tenants.Cache
   alias Realtime.Tenants.Connect
+  alias Realtime.Tenants.EncryptionReconciler
   alias Realtime.Tenants.Migrations
   alias Realtime.UsersCounter
 
@@ -480,9 +481,14 @@ defmodule Realtime.Tenants do
   def get_tenant_by_external_id(external_id) do
     repo_replica = Replica.replica()
 
-    Tenant
-    |> repo_replica.get_by(external_id: external_id)
-    |> repo_replica.preload(:extensions)
+    tenant =
+      Tenant
+      |> repo_replica.get_by(external_id: external_id)
+      |> repo_replica.preload(:extensions)
+
+    if tenant, do: EncryptionReconciler.reconcile(tenant)
+
+    tenant
   end
 
   @doc """
@@ -522,7 +528,8 @@ defmodule Realtime.Tenants do
 
   @doc """
   """
-  @spec validate_payload_size(Tenant.t() | binary(), map() | binary()) :: :ok | {:error, :payload_size_exceeded}
+  @spec validate_payload_size(Tenant.t() | binary(), map() | binary() | {String.t(), :json | :binary, binary(), map()}) ::
+          :ok | {:error, :payload_size_exceeded}
   def validate_payload_size(tenant_id, payload) when is_binary(tenant_id) do
     tenant_id
     |> Cache.get_tenant_by_external_id()

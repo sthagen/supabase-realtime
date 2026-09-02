@@ -52,6 +52,57 @@ defmodule Realtime.GenRpcPubSub.RegionRingsTest do
     end
   end
 
+  describe "all_node_regions/1" do
+    test "falls back to a live syn read before the table exists" do
+      # No RegionRings started: the table is absent, so :ets.lookup raises and the
+      # rescue must fall back to a single Nodes.all_node_regions/0 read.
+      expect(Nodes, :all_node_regions, fn -> [@region, "us-east-1"] end)
+
+      assert RegionRings.all_node_regions(:rr_absent_table) == [@region, "us-east-1"]
+    end
+
+    test "falls back to a live syn read before any reconcile has populated the cache row" do
+      %{table: table} = start_region_rings!()
+
+      # Table exists (created in init) but the cache row hasn't been written yet, so
+      # the empty-lookup branch must fall back to a single Nodes.all_node_regions/0 read.
+      expect(Nodes, :all_node_regions, fn -> [@region, "us-east-1"] end)
+
+      assert RegionRings.all_node_regions(table) == [@region, "us-east-1"]
+    end
+
+    test "reads are served from the cache after a reconcile, never re-reading syn" do
+      %{pid: pid, table: table} = start_region_rings!()
+
+      # Exactly one syn read, performed by the reconcile itself. If any later
+      # all_node_regions/1 fell through to syn, Mimic would see a second call and fail.
+      expect(Nodes, :all_node_regions, 1, fn -> [@region, "us-east-1"] end)
+      expect(Nodes, :region_nodes, 1, fn _ -> members() end)
+
+      reconcile(pid)
+
+      assert RegionRings.all_node_regions(table) == [@region, "us-east-1"]
+      # Read again: served from ETS, not from syn (guaranteed by the expect-once above).
+      assert RegionRings.all_node_regions(table) == [@region, "us-east-1"]
+    end
+
+    test "a reconcile refreshes the cached region set when membership changes" do
+      %{pid: pid, table: table} = start_region_rings!()
+
+      # One region_nodes read per reconcile (only @region is wanted; "us-east-1" is
+      # own_region and is rejected).
+      expect(Nodes, :region_nodes, 2, fn _ -> members() end)
+
+      expect(Nodes, :all_node_regions, fn -> [@region] end)
+      reconcile(pid)
+      assert RegionRings.all_node_regions(table) == [@region]
+
+      expect(Nodes, :all_node_regions, fn -> [@region, "us-east-1"] end)
+      reconcile(pid)
+      assert RegionRings.all_node_regions(table) == [@region, "us-east-1"]
+    end
+  end
+
   describe "ring process exit" do
     test "rebuilds a ring that exits and recovers expected_router" do
       members = members()
@@ -192,19 +243,26 @@ defmodule Realtime.GenRpcPubSub.RegionRingsTest do
     gen_rpc_port = Application.fetch_env!(:gen_rpc, :tcp_server_port)
     remote_scope = :"realtime_channels_#{@remote_region}"
 
-    node_ports = [{:rr_int_a, 16995}, {:rr_int_b, 16996}, {:rr_int_c, 16997}]
+    peers = [:rr_int_a, :rr_int_b, :rr_int_c]
 
     client_config_per_node =
-      Map.new([{node(), gen_rpc_port} | Enum.map(node_ports, fn {n, p} -> {:"#{n}@127.0.0.1", p} end)])
+      Map.new([
+        {node(), gen_rpc_port}
+        | Enum.map(peers, fn peer -> {TestEnv.peer_node(peer), TestEnv.peer_gen_rpc_port(peer)} end)
+      ])
 
     on_exit(fn -> Application.put_env(:gen_rpc, :client_config_per_node, {:internal, %{}}) end)
     Application.put_env(:gen_rpc, :client_config_per_node, {:internal, client_config_per_node})
     extra_config = [{:gen_rpc, :client_config_per_node, {:internal, client_config_per_node}}]
 
     nodes =
-      Enum.map(Enum.with_index(node_ports), fn {{name, port}, idx} ->
-        config = [{:realtime, :region, @remote_region}, {:gen_rpc, :tcp_server_port, port}] ++ extra_config
-        {:ok, n} = Clustered.start(nil, name: name, extra_config: config, phoenix_port: 4030 + idx)
+      Enum.map(peers, fn peer ->
+        config =
+          [{:realtime, :region, @remote_region}, {:gen_rpc, :tcp_server_port, TestEnv.peer_gen_rpc_port(peer)}] ++
+            extra_config
+
+        {:ok, n} = Clustered.start(nil, name: peer, extra_config: config, phoenix_port: TestEnv.peer_http_port(peer))
+
         n
       end)
 

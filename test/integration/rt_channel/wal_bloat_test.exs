@@ -1,10 +1,7 @@
 defmodule Realtime.Integration.RtChannel.WalBloatTest do
-  use RealtimeWeb.ConnCase,
-    async: false,
-    parameterize: [
-      %{serializer: Phoenix.Socket.V1.JSONSerializer},
-      %{serializer: RealtimeWeb.Socket.V2Serializer}
-    ]
+  # WAL-bloat detection and replication recovery are serializer-independent, so this
+  # only runs under a single serializer (the websocket encode/decode path is covered elsewhere).
+  use RealtimeWeb.ConnCase, async: false
 
   import Generators
 
@@ -75,8 +72,8 @@ defmodule Realtime.Integration.RtChannel.WalBloatTest do
     # TODO: fix potential incompatibility on realtime.send in OrioleDB. See https://github.com/orioledb/orioledb/issues/936
     @tag :skip_orioledb
     @tag timeout: :timer.minutes(3)
-    test "track PID changes during WAL bloat creation", %{tenant: tenant, topic: topic, serializer: serializer} do
-      {socket, _} = get_connection(tenant, serializer, role: "authenticated")
+    test "track PID changes during WAL bloat creation", %{tenant: tenant, topic: topic} do
+      {socket, _} = get_connection(tenant, RealtimeWeb.Socket.V2Serializer, role: "authenticated")
       full_topic = "realtime:#{topic}"
 
       WebsocketClient.join(socket, full_topic, %{config: %{broadcast: %{self: true}, private: false}})
@@ -144,15 +141,17 @@ defmodule Realtime.Integration.RtChannel.WalBloatTest do
     pid
   end
 
+  # Waits for the slot to be not just active, but caught up (lag back under the
+  # watchdog's threshold). A slot can briefly show an active_pid while still
+  # replaying leftover WAL from the bloat, only for the watchdog to kill it again
+  # moments later - checking the same condition the watchdog checks avoids that race.
   defp await_replication_slot_active(db_conn, retries, interval_ms) do
+    slot_name = "supabase_realtime_messages_replication_slot_"
+
     Enum.reduce_while(1..retries, nil, fn _, _ ->
-      case Postgrex.query!(
-             db_conn,
-             "SELECT active_pid FROM pg_replication_slots WHERE active_pid IS NOT NULL AND slot_name = 'supabase_realtime_messages_replication_slot_'",
-             []
-           ) do
-        %{rows: [[pid]]} ->
-          {:halt, pid}
+      case Database.check_replication_slot(db_conn, slot_name) do
+        :ok ->
+          {:halt, active_replication_slot_pid!(db_conn)}
 
         _ ->
           Process.sleep(interval_ms)

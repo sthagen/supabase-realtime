@@ -6,19 +6,24 @@ defmodule Realtime.DatabaseTest do
 
   import ExUnit.CaptureLog
 
+  alias Realtime.Crypto
   alias Realtime.Database
 
   doctest Realtime.Database
   def handle_telemetry(event, metadata, content, pid: pid), do: send(pid, {event, metadata, content})
 
-  setup do
-    tenant = TestTenantDb.checkout_tenant()
+  setup context do
     :telemetry.attach(__MODULE__, [:realtime, :database, :transaction], &__MODULE__.handle_telemetry/4, pid: self())
 
     on_exit(fn -> :telemetry.detach(__MODULE__) end)
 
-    %{tenant: tenant}
+    maybe_checkout_tenant(context)
   end
+
+  # Pure tests (DNS resolution, settings structs, pool-size math) never touch a tenant database,
+  # so they skip the container checkout.
+  defp maybe_checkout_tenant(%{without_db: true}), do: :ok
+  defp maybe_checkout_tenant(_context), do: %{tenant: TestTenantDb.checkout_tenant()}
 
   describe "check_tenant_connection/1" do
     setup context do
@@ -80,14 +85,25 @@ defmodule Realtime.DatabaseTest do
 
     @tag db_pool: 3
     test "durable pool opens the configured number of realtime_connect connections", %{tenant: tenant} do
-      assert {:ok, conn, _migrations_ran} = Database.check_tenant_connection(tenant)
+      # pg_stat_activity is server-wide, so draining 'realtime_connect' backends left
+      # behind by earlier tests can inflate the count. Terminate any lingering ones
+      # (using a separate connection that is not counted) to start from a clean slate.
+      {:ok, admin} = Database.connect(tenant, "realtime_test", :stop)
+
+      Postgrex.query!(
+        admin,
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'realtime_connect'",
+        []
+      )
+
+      assert {:ok, _conn, _migrations_ran} = Database.check_tenant_connection(tenant)
 
       # Postgrex opens the pool connections asynchronously, so give it a moment
       # to bring all of them up.
       assert eventually(fn ->
                %{rows: [[count]]} =
                  Postgrex.query!(
-                   conn,
+                   admin,
                    "SELECT count(*)::int FROM pg_stat_activity WHERE application_name = 'realtime_connect'",
                    []
                  )
@@ -243,6 +259,7 @@ defmodule Realtime.DatabaseTest do
   end
 
   describe "pool_size_by_application_name/2" do
+    @describetag without_db: true
     test "returns the number of connections per application name" do
       assert Database.pool_size_by_application_name("realtime_connect", %{}) == 1
       assert Database.pool_size_by_application_name("realtime_connect", %{"db_pool" => 10}) == 10
@@ -260,6 +277,7 @@ defmodule Realtime.DatabaseTest do
   end
 
   describe "get_external_id/1" do
+    @describetag without_db: true
     test "returns the external id for a given hostname" do
       assert Realtime.Database.get_external_id("tenant.realtime.supabase.co") == {:ok, "tenant"}
       assert Realtime.Database.get_external_id("tenant.supabase.co") == {:ok, "tenant"}
@@ -268,6 +286,7 @@ defmodule Realtime.DatabaseTest do
   end
 
   describe "detect_ip_version/1" do
+    @describetag without_db: true
     test "detects appropriate IP version" do
       # Using ipv4.google.com
       assert Realtime.Database.detect_ip_version("ipv4.google.com") == {:ok, :inet}
@@ -298,6 +317,25 @@ defmodule Realtime.DatabaseTest do
     test "uses default backoff when not provided", %{tenant: tenant} do
       {:ok, settings} = Database.from_tenant(tenant, "realtime_test")
       assert settings.backoff_type == :rand_exp
+    end
+  end
+
+  describe "from_settings/3 encryption" do
+    test "decrypts GCM and legacy ECB values side by side", %{tenant: tenant} do
+      [extension] = tenant.extensions
+
+      settings =
+        extension.settings
+        |> Map.put("db_name", Crypto.encrypt!("gcm_db", cipher: :gcm))
+        |> Map.put("db_user", Crypto.encrypt!("ecb_user", cipher: :ecb))
+
+      {:ok, _} = extension |> Ecto.Changeset.change(%{settings: settings}) |> Repo.update()
+
+      tenant = Realtime.Api.get_tenant_by_external_id(tenant.external_id)
+      settings = Realtime.PostgresCdc.filter_settings("postgres_cdc_rls", tenant.extensions)
+
+      assert {:ok, %Database{database: "gcm_db", username: "ecb_user"}} =
+               Database.from_settings(settings, "realtime_connect")
     end
   end
 
@@ -336,6 +374,7 @@ defmodule Realtime.DatabaseTest do
              } = settings
     end
 
+    @tag without_db: true
     test "defaults ssl to true when ssl_enforced is not set" do
       assert Database.default_ssl_param(%{})
       assert Database.default_ssl_param(%{"other" => "value"})
@@ -357,12 +396,12 @@ defmodule Realtime.DatabaseTest do
     end
   end
 
-  describe "check_replication_slot_lag/2" do
+  describe "check_replication_slot/2" do
     setup %{tenant: tenant} do
       {:ok, db_conn} = Database.connect(tenant, "realtime_test", :stop)
       suffix = System.unique_integer([:positive])
-      slot_name = "test_lag_#{suffix}"
-      table_name = "lag_test_#{suffix}"
+      slot_name = "test_slot_#{suffix}"
+      table_name = "slot_test_#{suffix}"
 
       Postgrex.query!(db_conn, "SELECT pg_create_logical_replication_slot($1, 'pgoutput')", [slot_name])
       Postgrex.query!(db_conn, "CREATE TABLE IF NOT EXISTS #{table_name} (id INT, data TEXT)", [])
@@ -382,25 +421,33 @@ defmodule Realtime.DatabaseTest do
       %{db_conn: db_conn, slot_name: slot_name, table_name: table_name}
     end
 
-    test "returns :ok when slot lag is below threshold", %{db_conn: db_conn, slot_name: slot_name} do
-      assert :ok == Database.check_replication_slot_lag(db_conn, slot_name)
+    test "returns {:error, :slot_not_found} for unknown slot", %{db_conn: db_conn} do
+      assert {:error, :slot_not_found} == Database.check_replication_slot(db_conn, "nonexistent_slot_xyz")
     end
 
-    test "returns :ok when slot lag is non-zero but below threshold", %{
+    test "returns {:error, :slot_inactive} when slot exists but is not being consumed", %{
+      db_conn: db_conn,
+      slot_name: slot_name
+    } do
+      assert {:error, :slot_inactive} == Database.check_replication_slot(db_conn, slot_name)
+    end
+
+    test "returns {:error, :slot_inactive} when lag is non-zero but below threshold", %{
       db_conn: db_conn,
       slot_name: slot_name,
       table_name: table_name
     } do
       # Generate ~40% of the 32MB max_slot_wal_keep_size (test container value) by inserting
       # ~50k rows of 200 bytes each — produces roughly 12-13MB of WAL, safely under the 16MB
-      # (50%) shutdown threshold. The slot is inactive so restart_lsn stays pinned.
+      # (50%) lag threshold. The slot is inactive so restart_lsn stays pinned; with lag below
+      # the threshold, inactivity is the reported problem.
       Postgrex.query!(
         db_conn,
         "INSERT INTO #{table_name} SELECT generate_series(1, 50000), repeat('x', 200)",
         []
       )
 
-      assert :ok == Database.check_replication_slot_lag(db_conn, slot_name)
+      assert {:error, :slot_inactive} == Database.check_replication_slot(db_conn, slot_name)
     end
 
     test "returns {:error, :lag_too_high} when slot is far behind", %{
@@ -409,18 +456,15 @@ defmodule Realtime.DatabaseTest do
       table_name: table_name
     } do
       # Generate >16MB of WAL (50% of the 32MB max_slot_wal_keep_size in test containers).
-      # The slot is inactive so restart_lsn stays pinned at creation LSN.
+      # The slot is inactive so restart_lsn stays pinned at creation LSN. An excessive lag
+      # takes precedence over the slot being inactive.
       Postgrex.query!(
         db_conn,
         "INSERT INTO #{table_name} SELECT generate_series(1, 100000), repeat('x', 200)",
         []
       )
 
-      assert {:error, :lag_too_high} == Database.check_replication_slot_lag(db_conn, slot_name)
-    end
-
-    test "returns :ok for unknown slot", %{db_conn: db_conn} do
-      assert :ok == Database.check_replication_slot_lag(db_conn, "nonexistent_slot_xyz")
+      assert {:error, :lag_too_high} == Database.check_replication_slot(db_conn, slot_name)
     end
   end
 
