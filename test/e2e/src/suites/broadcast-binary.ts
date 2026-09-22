@@ -2,15 +2,16 @@ import assert from "assert";
 import { SQL } from "bun";
 import { DB_URL, DB_SSL, RATE_LIMIT_PAUSE_MS } from "../context.ts";
 import type { SuiteDescriptor } from "../runner.ts";
-import { sleep, randomTopic, waitFor, openReplicationChannel, REPLICATION_READY_CONFIG } from "../helpers.ts";
+import { sleep, randomTopic, waitFor, stopClient, openReplicationChannel, REPLICATION_READY_CONFIG } from "../helpers.ts";
 
 export const broadcastBinary: SuiteDescriptor = {
   name: "broadcast-binary",
   label: "broadcast binary",
   needsDb: true,
-  run: async ({ supabase, test }) => {
+  run: async ({ authedClient, test }) => {
     await sleep(RATE_LIMIT_PAUSE_MS);
     await test("send_binary delivers a binary broadcast", async () => {
+      const supabase = await authedClient();
       const sql = new SQL(DB_URL, { tls: DB_SSL || undefined });
       try {
         const event = crypto.randomUUID();
@@ -34,7 +35,7 @@ export const broadcastBinary: SuiteDescriptor = {
         return [{ label: "subscribe", value: subscribeMs, unit: "ms" }, { label: "event", value: eventMs, unit: "ms" }];
       } finally {
         await sql.close().catch(() => {});
-        await supabase.removeAllChannels();
+        await stopClient(supabase);
       }
     });
   },

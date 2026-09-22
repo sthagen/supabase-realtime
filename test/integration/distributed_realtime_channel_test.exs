@@ -44,6 +44,11 @@ defmodule Realtime.Integration.DistributedRealtimeChannelTest do
       :ok = WebsocketClient.join(remote_socket, topic, %{config: config})
       :ok = WebsocketClient.join(socket, topic, %{config: config})
 
+      # Wait for both channels to have successfully joined, as a broadcast is fire
+      # and forget.
+      assert_receive %Message{event: "phx_reply", payload: %{"status" => "ok"}, topic: ^topic}, 5000
+      assert_receive %Message{event: "phx_reply", payload: %{"status" => "ok"}, topic: ^topic}, 5000
+
       # Send through one socket and receive through the other (self: false)
       payload = %{"event" => "TEST", "payload" => %{"msg" => 1}, "type" => "broadcast"}
       :ok = WebsocketClient.send_event(remote_socket, topic, "broadcast", payload)
@@ -52,20 +57,20 @@ defmodule Realtime.Integration.DistributedRealtimeChannelTest do
     end
   end
 
+  # Actually as of today (2026-09-14) this doesn't yet go through Muster, as the flag
+  # isn't yet turned on by default. As we want to roll out Muster further I'm still
+  # keeping the gate here.
   # Broadcasts route through Muster's region ring, so wait for the local and
   # peer node to both consider it :ready and agree on the same ring view before
   # sending anything cross-node.
   defp wait_for_muster_ready(node, region) do
     scope = :"realtime_channels_#{region}"
 
-    assert TestHelpers.eventually(
-             fn ->
-               Muster.status(scope) == :ready and
-                 :erpc.call(node, Muster, :status, [scope]) == :ready and
-                 Muster.view_hash(scope) == :erpc.call(node, Muster, :view_hash, [scope])
-             end,
-             retries: 150,
-             sleep: 100
-           )
+    assert_eventually(
+      Muster.status(scope) == :ready and
+        :erpc.call(node, Muster, :status, [scope]) == :ready and
+        Muster.view_hash(scope) == :erpc.call(node, Muster, :view_hash, [scope]),
+      timeout: to_timeout(second: 15)
+    )
   end
 end

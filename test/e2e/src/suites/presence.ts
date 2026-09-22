@@ -1,14 +1,15 @@
 import assert from "assert";
 import { RATE_LIMIT_PAUSE_MS } from "../context.ts";
 import type { SuiteDescriptor } from "../runner.ts";
-import { sleep, randomTopic, waitFor, openChannel } from "../helpers.ts";
+import { sleep, randomTopic, waitFor, stopClient, openChannel } from "../helpers.ts";
 
 export const presence: SuiteDescriptor = {
   name: "presence",
   label: "presence extension",
   needsDb: true,
-  run: async ({ supabase, test }) => {
+  run: async ({ authedClient, test }) => {
     await test("user is able to receive presence updates", async () => {
+      const supabase = await authedClient();
       try {
         let joinEvent: any = null;
         const topic = randomTopic();
@@ -29,12 +30,13 @@ export const presence: SuiteDescriptor = {
         assert.strictEqual(joinEvent.newPresences[0].message, message);
         return [{ label: "subscribe", value: subscribeMs, unit: "ms" }, { label: "track", value: trackMs, unit: "ms" }, { label: "event", value: eventMs, unit: "ms" }];
       } finally {
-        await supabase.removeAllChannels();
+        await stopClient(supabase);
       }
     });
 
     await sleep(RATE_LIMIT_PAUSE_MS);
     await test("user is able to receive presence updates on private channels", async () => {
+      const supabase = await authedClient();
       try {
 
         let joinEvent: any = null;
@@ -56,7 +58,7 @@ export const presence: SuiteDescriptor = {
         assert.strictEqual(joinEvent.newPresences[0].message, message);
         return [{ label: "subscribe", value: subscribeMs, unit: "ms" }, { label: "track", value: trackMs, unit: "ms" }, { label: "event", value: eventMs, unit: "ms" }];
       } finally {
-        await supabase.removeAllChannels();
+        await stopClient(supabase);
       }
     });
   },

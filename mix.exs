@@ -4,7 +4,7 @@ defmodule Realtime.MixProject do
   def project do
     [
       app: :realtime,
-      version: "2.135.0",
+      version: "2.137.14",
       elixir: "~> 1.19",
       elixirc_paths: elixirc_paths(Mix.env()),
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
@@ -99,7 +99,7 @@ defmodule Realtime.MixProject do
       {:cachex, "~> 4.0"},
       {:open_api_spex, "~> 3.16"},
       {:corsica, "~> 2.0"},
-      {:observer_cli, "~> 1.7"},
+      {:observer_cli, "~> 2.0"},
       {:opentelemetry_exporter, "~> 1.10"},
       {:opentelemetry, "~> 1.7"},
       {:opentelemetry_api, "~> 1.5"},
@@ -109,7 +109,7 @@ defmodule Realtime.MixProject do
       {:gen_rpc, git: "https://github.com/emqx/gen_rpc.git", tag: "3.6.1"},
       # gen_rpc uses a git dependency
       {:snabbkaffe, "~> 1.0", override: true},
-      {:req, "~> 0.6.2"},
+      {:req, "~> 0.7.4"},
       {:mimic, "~> 2.0", only: :test},
       {:floki, ">= 0.30.0", only: :test},
       {:lazy_html, ">= 0.1.0", only: :test},
@@ -122,7 +122,8 @@ defmodule Realtime.MixProject do
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: :dev, runtime: false},
       {:poolboy, "~> 1.5", only: :test},
-      {:mix_test_watch, "~> 1.0", only: [:dev, :test], runtime: false}
+      {:mix_test_watch, "~> 1.0", only: [:dev, :test], runtime: false},
+      {:wait_for_it, "~> 2.6", only: [:dev, :test]}
     ]
   end
 
@@ -155,6 +156,7 @@ defmodule Realtime.MixProject do
       seed: ["run priv/repo/dev_seeds.exs"],
       "test.setup": [
         "cmd epmd -daemon",
+        &start_distribution/1,
         "ecto.create --quiet",
         "ecto.migrate"
       ],
@@ -163,6 +165,16 @@ defmodule Realtime.MixProject do
       "crap.ci": ["compile", &merge_coverdata/1, "crap"],
       "assets.deploy": ["esbuild default --minify", "tailwind default --minify", "phx.digest"]
     ]
+  end
+
+  defp start_distribution(_args) do
+    name = Application.fetch_env!(:realtime, :test_node_name)
+
+    case :net_kernel.start([name, :longnames]) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+      {:error, reason} -> Mix.raise("could not start distribution as #{name}: #{inspect(reason)}")
+    end
   end
 
   defp merge_coverdata(_args) do

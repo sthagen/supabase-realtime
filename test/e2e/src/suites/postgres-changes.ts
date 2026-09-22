@@ -1,8 +1,8 @@
 import assert from "assert";
-import { BROADCAST_CONFIG, RATE_LIMIT_PAUSE_MS } from "../context.ts";
+import { POSTGRES_CHANGES_CONFIG, RATE_LIMIT_PAUSE_MS } from "../context.ts";
 import type { SuiteDescriptor } from "../runner.ts";
 import {
-  sleep, randomTopic, waitFor, openPostgresChannel,
+  sleep, randomTopic, waitFor, stopClient, openPostgresChannel,
   executeInsert, executeUpdate, executeDelete,
 } from "../helpers.ts";
 
@@ -10,16 +10,18 @@ export const postgresChanges: SuiteDescriptor = {
   name: "postgres-changes",
   label: "postgres changes extension",
   needsDb: true,
-  run: async ({ supabase, test }) => {
+  runCasesInParallel: true,
+  run: async ({ authedClient, test }) => {
     await sleep(RATE_LIMIT_PAUSE_MS);
     await test("user receives INSERT events with filter", async () => {
+      const supabase = await authedClient();
       try {
 
         let result: unknown = null;
         const uniqueValue = crypto.randomUUID();
 
         const channel = supabase
-          .channel(randomTopic(), BROADCAST_CONFIG)
+          .channel(randomTopic(), POSTGRES_CHANGES_CONFIG)
           .on("postgres_changes",
             { event: "INSERT", schema: "public", table: "pg_changes", filter: `value=eq.${uniqueValue}` },
             (payload) => (result = payload));
@@ -33,12 +35,13 @@ export const postgresChanges: SuiteDescriptor = {
         assert.strictEqual(result.new.value, uniqueValue);
         return [{ label: "subscribe", value: subscribeMs, unit: "ms" }, { label: "event", value: eventMs, unit: "ms" }];
       } finally {
-        await supabase.removeAllChannels();
+        await stopClient(supabase);
       }
     });
 
     await sleep(RATE_LIMIT_PAUSE_MS);
     await test("user receives UPDATE events with filter", async () => {
+      const supabase = await authedClient();
       try {
 
         let result: unknown = null;
@@ -47,7 +50,7 @@ export const postgresChanges: SuiteDescriptor = {
         const dummyId = await executeInsert(supabase, "dummy");
 
         const channel = supabase
-          .channel(randomTopic(), BROADCAST_CONFIG)
+          .channel(randomTopic(), POSTGRES_CHANGES_CONFIG)
           .on("postgres_changes",
             { event: "UPDATE", schema: "public", table: "pg_changes", filter: `id=eq.${mainId}` },
             (payload) => (result = payload));
@@ -64,12 +67,13 @@ export const postgresChanges: SuiteDescriptor = {
         assert.strictEqual(result.new.id, mainId);
         return [{ label: "subscribe", value: subscribeMs, unit: "ms" }, { label: "event", value: eventMs, unit: "ms" }];
       } finally {
-        await supabase.removeAllChannels();
+        await stopClient(supabase);
       }
     });
 
     await sleep(RATE_LIMIT_PAUSE_MS);
     await test("user receives DELETE events with filter", async () => {
+      const supabase = await authedClient();
       try {
 
         let result: unknown = null;
@@ -78,7 +82,7 @@ export const postgresChanges: SuiteDescriptor = {
         const dummyId = await executeInsert(supabase, "dummy");
 
         const channel = supabase
-          .channel(randomTopic(), BROADCAST_CONFIG)
+          .channel(randomTopic(), POSTGRES_CHANGES_CONFIG)
           .on("postgres_changes",
             { event: "DELETE", schema: "public", table: "pg_changes", filter: `id=eq.${mainId}` },
             (payload) => (result = payload));
@@ -95,12 +99,13 @@ export const postgresChanges: SuiteDescriptor = {
         assert.strictEqual(result.old.id, mainId);
         return [{ label: "subscribe", value: subscribeMs, unit: "ms" }, { label: "event", value: eventMs, unit: "ms" }];
       } finally {
-        await supabase.removeAllChannels();
+        await stopClient(supabase);
       }
     });
 
     await sleep(RATE_LIMIT_PAUSE_MS);
     await test("user receives INSERT, UPDATE and DELETE concurrently", async () => {
+      const supabase = await authedClient();
       try {
         let insertResult: unknown = null, updateResult: unknown = null, deleteResult: unknown = null;
 
@@ -109,7 +114,7 @@ export const postgresChanges: SuiteDescriptor = {
         const deleteId = await executeInsert(supabase, "pg_changes");
 
         const channel = supabase
-          .channel(randomTopic(), BROADCAST_CONFIG)
+          .channel(randomTopic(), POSTGRES_CHANGES_CONFIG)
           .on("postgres_changes", { event: "INSERT", schema: "public", table: "pg_changes", filter: `value=eq.${insertValue}` }, (p) => (insertResult = p))
           .on("postgres_changes", { event: "UPDATE", schema: "public", table: "pg_changes", filter: `id=eq.${updateId}` }, (p) => (updateResult = p))
           .on("postgres_changes", { event: "DELETE", schema: "public", table: "pg_changes", filter: `id=eq.${deleteId}` }, (p) => (deleteResult = p));
@@ -138,19 +143,20 @@ export const postgresChanges: SuiteDescriptor = {
           { label: "DELETE", value: deleteMs, unit: "ms" },
         ];
       } finally {
-        await supabase.removeAllChannels();
+        await stopClient(supabase);
       }
     });
 
     await sleep(RATE_LIMIT_PAUSE_MS);
     await test("select — omitting select returns full payload (backward compatible)", async () => {
+      const supabase = await authedClient();
       try {
         let result: any = null;
         const uniqueValue = crypto.randomUUID();
         const details = crypto.randomUUID();
 
         const channel = supabase
-          .channel(randomTopic(), BROADCAST_CONFIG)
+          .channel(randomTopic(), POSTGRES_CHANGES_CONFIG)
           .on("postgres_changes",
             { event: "INSERT", schema: "public", table: "pg_changes", filter: `value=eq.${uniqueValue}` },
             (payload) => (result = payload));
@@ -165,7 +171,7 @@ export const postgresChanges: SuiteDescriptor = {
         assert.strictEqual(result.new.details, details, "details must be present when no select is used");
         return [{ label: "subscribe", value: subscribeMs, unit: "ms" }, { label: "event", value: eventMs, unit: "ms" }];
       } finally {
-        await supabase.removeAllChannels();
+        await stopClient(supabase);
       }
     });
   },

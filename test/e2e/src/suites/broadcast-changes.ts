@@ -1,15 +1,16 @@
 import assert from "assert";
 import { RATE_LIMIT_PAUSE_MS } from "../context.ts";
 import type { SuiteDescriptor } from "../runner.ts";
-import { sleep, randomTopic, waitFor, openReplicationChannel, REPLICATION_READY_CONFIG } from "../helpers.ts";
+import { sleep, randomTopic, waitFor, stopClient, openReplicationChannel, REPLICATION_READY_CONFIG } from "../helpers.ts";
 
 export const broadcastChanges: SuiteDescriptor = {
   name: "broadcast-changes",
   label: "broadcast changes",
   needsDb: true,
-  run: async ({ supabase, test }) => {
+  run: async ({ authedClient, test }) => {
     await sleep(RATE_LIMIT_PAUSE_MS);
     await test("authenticated user receives INSERT broadcast change", async () => {
+      const supabase = await authedClient();
       try {
         const testTopic = randomTopic();
         const id = crypto.randomUUID();
@@ -32,12 +33,13 @@ export const broadcastChanges: SuiteDescriptor = {
         assert.strictEqual(result.payload.table, "broadcast_changes");
         return [{ label: "subscribe", value: subscribeMs, unit: "ms" }, { label: "event", value: eventMs, unit: "ms" }];
       } finally {
-        await supabase.removeAllChannels();
+        await stopClient(supabase);
       }
     });
 
     await sleep(RATE_LIMIT_PAUSE_MS);
     await test("authenticated user receives UPDATE broadcast change", async () => {
+      const supabase = await authedClient();
       try {
         const testTopic = randomTopic();
         const id = crypto.randomUUID();
@@ -63,12 +65,13 @@ export const broadcastChanges: SuiteDescriptor = {
         assert.strictEqual(result.payload.table, "broadcast_changes");
         return [{ label: "subscribe", value: subscribeMs, unit: "ms" }, { label: "event", value: eventMs, unit: "ms" }];
       } finally {
-        await supabase.removeAllChannels();
+        await stopClient(supabase);
       }
     });
 
     await sleep(RATE_LIMIT_PAUSE_MS);
     await test("authenticated user receives DELETE broadcast change", async () => {
+      const supabase = await authedClient();
       try {
         const testTopic = randomTopic();
         const id = crypto.randomUUID();
@@ -92,7 +95,7 @@ export const broadcastChanges: SuiteDescriptor = {
         assert.strictEqual(result.payload.table, "broadcast_changes");
         return [{ label: "subscribe", value: subscribeMs, unit: "ms" }, { label: "event", value: eventMs, unit: "ms" }];
       } finally {
-        await supabase.removeAllChannels();
+        await stopClient(supabase);
       }
     });
   },
